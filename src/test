@@ -1,1 +1,305 @@
-Hello
+import React from 'react';
+import { X, ChevronRight } from 'lucide-react';
+
+const ModalHeader = ({ 
+  title = "Modal Expanded",
+  status = "BOOKED",
+  statusColor = "bg-green-500",
+  buttonText = "VIEW HOTEL DETAILS",
+  backgroundImage,
+  onClose,
+  onButtonClick,
+  className = ""
+}) => {
+  return (
+    <header className={`modal-header ${className}`}>
+      <div className="modal-header__container">
+        {/* Background Image */}
+        <div 
+          className="modal-header__background"
+          style={{ backgroundImage: `url(${backgroundImage})` }}
+          aria-hidden="true"
+        />
+        
+        {/* Overlay for better text readability */}
+        <div className="modal-header__overlay" />
+        
+        {/* Content Grid */}
+        <div className="modal-header__content">
+          {/* Title - Top Left */}
+          <h1 className="modal-header__title">
+            {title}
+          </h1>
+          
+          {/* Close Button - Top Right */}
+          <button 
+            className="modal-header__close"
+            onClick={onClose}
+            aria-label="Close modal"
+          >
+            <X size={24} />
+          </button>
+          
+          {/* Status Badge - Bottom Left */}
+          <div className="modal-header__status">
+            <span className={`modal-header__status-badge ${statusColor}`}>
+              <span className="modal-header__status-dot" />
+              {status}
+            </span>
+          </div>
+          
+          {/* Action Button - Bottom Right (Desktop) */}
+          <button 
+            className="modal-header__button modal-header__button--desktop"
+            onClick={onButtonClick}
+          >
+            {buttonText}
+            <ChevronRight size={20} className="modal-header__button-icon" />
+          </button>
+          
+          {/* Action Button - Bottom Center (Mobile) */}
+          <button 
+            className="modal-header__button modal-header__button--mobile"
+            onClick={onButtonClick}
+          >
+            {buttonText}
+            <ChevronRight size={20} className="modal-header__button-icon" />
+          </button>
+        </div>
+      </div>
+      
+      <style jsx>{`
+        .modal-header {
+          position: relative;
+          width: 100%;
+        }
+        
+        .modal-header__container {
+          position: relative;
+          min-height: 300px;
+          overflow: hidden;
+          border-radius: 12px;
+        }
+        
+        .modal-header__background {
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background-size: cover;
+          background-position: center;
+          background-repeat: no-repeat;
+        }
+        
+        .modal-header__overlay {
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: linear-gradient(
+            to bottom,
+            rgba(0, 0, 0, 0.3) 0%,
+            rgba(0, 0, 0, 0.1) 50%,
+            rgba(0, 0, 0, 0.6) 100%
+          );
+        }
+        
+        .modal-header__content {
+          position: relative;
+          display: grid;
+          grid-template-columns: 1fr auto;
+          grid-template-rows: auto 1fr auto;
+          grid-template-areas:
+            "title close"
+            "empty empty"
+            "status button-mobile";
+          gap: 16px;
+          padding: 24px;
+          min-height: 300px;
+          color: white;
+        }
+        
+        .modal-header__title {
+          grid-area: title;
+          align-self: start;
+          font-size: 28px;
+          font-weight: 300;
+          margin: 0;
+          letter-spacing: 0.5px;
+        }
+        
+        .modal-header__close {
+          grid-area: close;
+          align-self: start;
+          justify-self: end;
+          background: none;
+          border: none;
+          color: white;
+          cursor: pointer;
+          padding: 8px;
+          border-radius: 50%;
+          transition: background-color 0.2s ease;
+        }
+        
+        .modal-header__close:hover {
+          background-color: rgba(255, 255, 255, 0.1);
+        }
+        
+        .modal-header__status {
+          grid-area: status;
+          align-self: end;
+        }
+        
+        .modal-header__status-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 20px;
+          border-radius: 24px;
+          background: white;
+          color: #374151;
+          font-size: 14px;
+          font-weight: 500;
+          letter-spacing: 1px;
+        }
+        
+        .modal-header__status-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background-color: currentColor;
+        }
+        
+        .bg-green-500 .modal-header__status-dot {
+          background-color: #10b981;
+        }
+        
+        .modal-header__button {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 12px 0;
+          background: none;
+          border: none;
+          border-bottom: 2px solid white;
+          color: white;
+          font-size: 16px;
+          font-weight: 500;
+          letter-spacing: 1px;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+        
+        .modal-header__button:hover {
+          border-bottom-color: rgba(255, 255, 255, 0.7);
+        }
+        
+        .modal-header__button--desktop {
+          display: none;
+        }
+        
+        .modal-header__button--mobile {
+          grid-area: button-mobile;
+          align-self: end;
+          justify-self: center;
+        }
+        
+        .modal-header__button-icon {
+          transition: transform 0.2s ease;
+        }
+        
+        .modal-header__button:hover .modal-header__button-icon {
+          transform: translateX(4px);
+        }
+        
+        /* Tablet and Desktop Styles */
+        @media (min-width: 768px) {
+          .modal-header__container {
+            min-height: 400px;
+          }
+          
+          .modal-header__content {
+            grid-template-areas:
+              "title close"
+              "empty empty"
+              "status button-desktop";
+            min-height: 400px;
+            padding: 32px;
+          }
+          
+          .modal-header__title {
+            font-size: 32px;
+          }
+          
+          .modal-header__button--desktop {
+            display: flex;
+            grid-area: button-desktop;
+            align-self: end;
+            justify-self: end;
+          }
+          
+          .modal-header__button--mobile {
+            display: none;
+          }
+        }
+        
+        /* Large Desktop */
+        @media (min-width: 1200px) {
+          .modal-header__container {
+            min-height: 450px;
+          }
+          
+          .modal-header__content {
+            min-height: 450px;
+            padding: 40px;
+          }
+          
+          .modal-header__title {
+            font-size: 36px;
+          }
+        }
+      `}</style>
+    </header>
+  );
+};
+
+// Example usage component
+const ModalHeaderExample = () => {
+  const handleClose = () => {
+    console.log('Modal closed');
+  };
+  
+  const handleButtonClick = () => {
+    console.log('Button clicked');
+  };
+  
+  return (
+    <div className="p-4 bg-gray-100 min-h-screen">
+      <div className="max-w-4xl mx-auto space-y-8">
+        <h2 className="text-2xl font-bold text-gray-800">Modal Header Component</h2>
+        
+        {/* Example 1: Default */}
+        <ModalHeader
+          backgroundImage="https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=1000&q=80"
+          onClose={handleClose}
+          onButtonClick={handleButtonClick}
+        />
+        
+        {/* Example 2: Custom Props */}
+        <ModalHeader
+          title="Luxury Resort"
+          status="AVAILABLE"
+          statusColor="bg-blue-500"
+          buttonText="VIEW AVAILABILITY"
+          backgroundImage="https://images.unsplash.com/photo-1571896349842-33c89424de2d?auto=format&fit=crop&w=1000&q=80"
+          onClose={handleClose}
+          onButtonClick={handleButtonClick}
+        />
+      </div>
+    </div>
+  );
+};
+
+export default ModalHeaderExample;

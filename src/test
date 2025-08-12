@@ -1,155 +1,121 @@
-// HotelHero.tsx
-type Props = {
-  imageSrc: string;                // comes from API
-  alt?: string;
-  status?: string;                  // e.g., "Booked"
-  onClose?: () => void;
-  onDetailsClick?: () => void;
+import React from "react";
+import styles from "./Chip.module.css";
+
+type ChipProps = {
+  label: string;
+  icon?: React.ReactNode;
+  iconPosition?: "start" | "end";
+  variant?: "solid" | "soft" | "outline";
+  color?: "neutral" | "success" | "warning" | "danger" | "info";
+  size?: "sm" | "md";
+  as?: "span" | "button" | "a";
+  href?: string;               // only if as="a"
+  disabled?: boolean;          // only if as="button"
+  className?: string;
+  onClick?: React.MouseEventHandler;
 };
 
-export default function HotelHero({
-  imageSrc,
-  alt = "",
-  status = "BOOKED",
-  onClose,
-  onDetailsClick,
-}: Props) {
+const cx = (...c: (string | false | undefined)[]) => c.filter(Boolean).join(" ");
+
+export default function Chip({
+  label,
+  icon,
+  iconPosition = "start",
+  variant = "soft",
+  color = "success",
+  size = "md",
+  as = "span",
+  href,
+  disabled,
+  className,
+  onClick,
+}: ChipProps) {
+  const Comp: any = as;
+
   return (
-    <figure className="hotel-hero">
-      <img className="hero-img" src={imageSrc} alt={alt} />
-      <div className="shade" aria-hidden="true" />
-      
-      <div className="status">
-        <span className="dot" aria-hidden="true" />
-        {status}
-      </div>
-
-      <button className="close" aria-label="Close" onClick={onClose}>×</button>
-
-      <button className="details" onClick={onDetailsClick}>
-        VIEW HOTEL DETAILS
-      </button>
-    </figure>
+    <Comp
+      href={as === "a" ? href : undefined}
+      disabled={as === "button" ? disabled : undefined}
+      onClick={onClick}
+      className={cx(
+        styles.chip,
+        styles[`size-${size}`],
+        styles[`variant-${variant}`],
+        styles[`color-${color}`],
+        className
+      )}
+      aria-disabled={as !== "button" && disabled ? true : undefined}
+    >
+      {icon && iconPosition === "start" && (
+        <span className={cx(styles.icon, styles.iconStart)} aria-hidden="true">
+          {icon}
+        </span>
+      )}
+      <span className={styles.label}>{label}</span>
+      {icon && iconPosition === "end" && (
+        <span className={cx(styles.icon, styles.iconEnd)} aria-hidden="true">
+          {icon}
+        </span>
+      )}
+    </Comp>
   );
 }
 
 
-/* HotelHero.css */
-.hotel-hero {
-  /* 1) Size/shape & grid setup */
-  aspect-ratio: 16 / 9;       /* keeps the hero steady; remove if content-driven */
-  width: 100%;
-  display: grid;
-  grid-template-columns: repeat(12, 1fr);
-  grid-template-rows: repeat(12, 1fr);
-  margin: 0;
-  position: relative;
-  overflow: hidden;
-  border-radius: 12px;
-}
+=======
 
-/* 2) Put the image in the back, filling the whole grid */
-.hero-img {
-  grid-column: 1 / -1;  /* span all columns */
-  grid-row: 1 / -1;     /* span all rows */
-  width: 100%;
-  height: 100%;
-  object-fit: cover;     /* nice crop across sizes */
-  display: block;
-  z-index: 0;
-}
+.chip {
+  --bg: #eef6ee;
+  --bg-soft: #f3f6f8;
+  --border: transparent;
+  --text: #0f172a;
+  --focus: 2px solid rgba(59,130,246,.5);
 
-/* optional legibility gradient (bottom fade) */
-.shade {
-  grid-column: 1 / -1;
-  grid-row: 1 / -1;
-  z-index: 1;
-  pointer-events: none;
-  background: linear-gradient(to top, rgba(0,0,0,.55) 0%, rgba(0,0,0,0) 45%);
-}
-
-/* 3) Overlay items (all layered above) */
-.status,
-.close,
-.details {
-  z-index: 2;
-  color: #fff;
-}
-
-/* Mobile placement (default) */
-/* BOOKED → top-left */
-.status {
-  grid-column: 2 / span 5;  /* near left */
-  grid-row: 2 / span 2;     /* near top */
-  align-self: start;
-  justify-self: start;
-  padding: 8px 14px;
-  border-radius: 999px;
-  background: rgba(255,255,255,.9);
-  color: #222;
-  font-weight: 600;
   display: inline-flex;
-  gap: 8px;
   align-items: center;
-  letter-spacing: .06em;
-  text-transform: uppercase;
-  font-size: clamp(12px, 2.5vw, 14px);
-}
-.status .dot {
-  width: 8px; height: 8px; border-radius: 50%;
-  background: #2ecc71;
-  display: inline-block;
-}
-
-/* × → top-right */
-.close {
-  grid-column: -3 / -2;   /* near right edge */
-  grid-row: 2 / span 2;
-  align-self: start;
-  justify-self: end;
-  background: none;
-  border: 0;
-  font-size: clamp(18px, 5vw, 28px);
+  gap: 0.35rem;
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
   line-height: 1;
-  cursor: pointer;
-  color: #fff;
-  text-shadow: 0 1px 2px rgba(0,0,0,.5);
+  white-space: nowrap;
+  font-weight: 500;
+  vertical-align: middle;
 }
 
-/* VIEW HOTEL DETAILS → bottom-left */
-.details {
-  grid-column: 2 / span 7;
-  grid-row: -3 / -2;      /* near bottom */
-  align-self: end;
-  justify-self: start;
-  padding: 10px 0;
-  background: none;
-  border: 0;
-  font-weight: 800;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-  border-bottom: 2px solid rgba(255,255,255,.5);
-  cursor: pointer;
-  font-size: clamp(14px, 2.5vw, 18px);
+/* sizes */
+.size-sm { font-size: 12px; padding: 2px 8px; }
+.size-md { font-size: 14px; padding: 4px 10px; }
+
+.icon { display: inline-flex; width: 1em; height: 1em; }
+.iconStart { margin-right: 0.25rem; }
+.iconEnd { margin-left: 0.25rem; }
+.label { display: inline-block; }
+
+/* focus for interactive variants */
+button.chip:focus-visible,
+a.chip:focus-visible {
+  outline: var(--focus);
+  outline-offset: 2px;
 }
 
-/* Desktop adjustments: reposition per your screenshot */
-@media (min-width: 900px) {
-  /* BOOKED → bottom-left */
-  .status {
-    grid-column: 2 / span 4;
-    grid-row: -4 / -2;
-    align-self: end;
-    justify-self: start;
-    background: rgba(255,255,255,.92);
-  }
+/* variants */
+.variant-solid { background: var(--bg); color: var(--on); border-color: var(--bg); }
+.variant-soft  { background: var(--bg-soft); color: var(--text); border-color: rgba(0,0,0,0.06); }
+.variant-outline { background: transparent; color: var(--text); border-color: var(--outline); }
 
-  /* DETAILS → bottom-right */
-  .details {
-    grid-column: 8 / -2;
-    grid-row: -3 / -2;
-    justify-self: end;
-    text-align: right;
-    width: max-content;
-  }
+/* colors: set variables, variants consume them */
+.color-neutral { --bg:#e5e7eb; --bg-soft:#f3f4f6; --on:#111827; --outline:#d1d5db; --text:#111827; }
+.color-success { --bg:#16a34a; --bg-soft:#ecfdf5; --on:white; --outline:#86efac; --text:#166534; }
+.color-warning { --bg:#f59e0b; --bg-soft:#fffbeb; --on:#111827; --outline:#fcd34d; --text:#92400e; }
+.color-danger  { --bg:#ef4444; --bg-soft:#fef2f2; --on:white; --outline:#fca5a5; --text:#991b1b; }
+.color-info    { --bg:#3b82f6; --bg-soft:#eff6ff; --on:white; --outline:#93c5fd; --text:#1e3a8a; }
+
+/* disabled */
+button.chip:disabled,
+.chip[aria-disabled="true"] {
+  opacity: .55;
+  cursor: not-allowed;
+  pointer-events: none;
 }

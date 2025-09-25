@@ -1,121 +1,33 @@
-import React from "react";
-import styles from "./Chip.module.css";
+import { useEffect, useRef } from 'react';
 
-type ChipProps = {
-  label: string;
-  icon?: React.ReactNode;
-  iconPosition?: "start" | "end";
-  variant?: "solid" | "soft" | "outline";
-  color?: "neutral" | "success" | "warning" | "danger" | "info";
-  size?: "sm" | "md";
-  as?: "span" | "button" | "a";
-  href?: string;               // only if as="a"
-  disabled?: boolean;          // only if as="button"
-  className?: string;
-  onClick?: React.MouseEventHandler;
-};
+export function useWhyDidYouUpdate<T extends Record<string, any>>(
+  label: string,
+  value: T | undefined | null
+) {
+  const prevRef = useRef<T | undefined | null>(undefined);
 
-const cx = (...c: (string | false | undefined)[]) => c.filter(Boolean).join(" ");
+  useEffect(() => {
+    const prev = prevRef.current ?? {};
+    const next = value ?? {};
+    const keys = new Set([...Object.keys(prev as any), ...Object.keys(next as any)]);
+    const changes: Record<string, { from: any; to: any }> = {};
 
-export default function Chip({
-  label,
-  icon,
-  iconPosition = "start",
-  variant = "soft",
-  color = "success",
-  size = "md",
-  as = "span",
-  href,
-  disabled,
-  className,
-  onClick,
-}: ChipProps) {
-  const Comp: any = as;
+    keys.forEach((k) => {
+      const a = (prev as any)[k] instanceof Date ? (prev as any)[k].getTime() : (prev as any)[k];
+      const b = (next as any)[k] instanceof Date ? (next as any)[k].getTime() : (next as any)[k];
+      if (!Object.is(a, b)) changes[k] = { from: a, to: b };
+    });
 
-  return (
-    <Comp
-      href={as === "a" ? href : undefined}
-      disabled={as === "button" ? disabled : undefined}
-      onClick={onClick}
-      className={cx(
-        styles.chip,
-        styles[`size-${size}`],
-        styles[`variant-${variant}`],
-        styles[`color-${color}`],
-        className
-      )}
-      aria-disabled={as !== "button" && disabled ? true : undefined}
-    >
-      {icon && iconPosition === "start" && (
-        <span className={cx(styles.icon, styles.iconStart)} aria-hidden="true">
-          {icon}
-        </span>
-      )}
-      <span className={styles.label}>{label}</span>
-      {icon && iconPosition === "end" && (
-        <span className={cx(styles.icon, styles.iconEnd)} aria-hidden="true">
-          {icon}
-        </span>
-      )}
-    </Comp>
-  );
-}
+    if (Object.keys(changes).length === 0 && prevRef.current !== value) {
+      // ref changed but shallowly equal — likely a spread/clone
+      // useful to catch “{...proposal}” recreations
+      // eslint-disable-next-line no-console
+      console.log(`[${label}] ref changed but shallowly equal`);
+    } else if (Object.keys(changes).length) {
+      // eslint-disable-next-line no-console
+      console.table(changes);
+    }
 
-
-=======
-
-.chip {
-  --bg: #eef6ee;
-  --bg-soft: #f3f6f8;
-  --border: transparent;
-  --text: #0f172a;
-  --focus: 2px solid rgba(59,130,246,.5);
-
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  border-radius: 9999px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  line-height: 1;
-  white-space: nowrap;
-  font-weight: 500;
-  vertical-align: middle;
-}
-
-/* sizes */
-.size-sm { font-size: 12px; padding: 2px 8px; }
-.size-md { font-size: 14px; padding: 4px 10px; }
-
-.icon { display: inline-flex; width: 1em; height: 1em; }
-.iconStart { margin-right: 0.25rem; }
-.iconEnd { margin-left: 0.25rem; }
-.label { display: inline-block; }
-
-/* focus for interactive variants */
-button.chip:focus-visible,
-a.chip:focus-visible {
-  outline: var(--focus);
-  outline-offset: 2px;
-}
-
-/* variants */
-.variant-solid { background: var(--bg); color: var(--on); border-color: var(--bg); }
-.variant-soft  { background: var(--bg-soft); color: var(--text); border-color: rgba(0,0,0,0.06); }
-.variant-outline { background: transparent; color: var(--text); border-color: var(--outline); }
-
-/* colors: set variables, variants consume them */
-.color-neutral { --bg:#e5e7eb; --bg-soft:#f3f4f6; --on:#111827; --outline:#d1d5db; --text:#111827; }
-.color-success { --bg:#16a34a; --bg-soft:#ecfdf5; --on:white; --outline:#86efac; --text:#166534; }
-.color-warning { --bg:#f59e0b; --bg-soft:#fffbeb; --on:#111827; --outline:#fcd34d; --text:#92400e; }
-.color-danger  { --bg:#ef4444; --bg-soft:#fef2f2; --on:white; --outline:#fca5a5; --text:#991b1b; }
-.color-info    { --bg:#3b82f6; --bg-soft:#eff6ff; --on:white; --outline:#93c5fd; --text:#1e3a8a; }
-
-/* disabled */
-button.chip:disabled,
-.chip[aria-disabled="true"] {
-  opacity: .55;
-  cursor: not-allowed;
-  pointer-events: none;
+    prevRef.current = value;
+  }, [label, value]);
 }

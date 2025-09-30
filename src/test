@@ -1,33 +1,241 @@
-import { useEffect, useRef } from 'react';
+/**
+ * Currency Conversion Utility
+ * Converts between any two currencies using USD as intermediate base
+ */
 
-export function useWhyDidYouUpdate<T extends Record<string, any>>(
-  label: string,
-  value: T | undefined | null
-) {
-  const prevRef = useRef<T | undefined | null>(undefined);
+/**
+ * Converts amount from one currency to another
+ * 
+ * @param {number} amount - The amount to convert
+ * @param {string} fromCurrency - Source currency code (e.g., 'INR', 'EUR')
+ * @param {string} toCurrency - Target currency code (e.g., 'EUR', 'INR')
+ * @param {Array} exchangeRates - Array of exchange rate objects from API
+ * @returns {number|null} - Converted amount or null if conversion fails
+ * 
+ * @example
+ * const rates = [...]; // Your API response
+ * const result = convertCurrency(1000, 'INR', 'EUR', rates);
+ */
+function convertCurrency(amount, fromCurrency, toCurrency, exchangeRates) {
+  // Validation: Check if inputs are valid
+  if (!amount || typeof amount !== 'number' || amount < 0) {
+    console.error('Invalid amount provided');
+    return null;
+  }
 
-  useEffect(() => {
-    const prev = prevRef.current ?? {};
-    const next = value ?? {};
-    const keys = new Set([...Object.keys(prev as any), ...Object.keys(next as any)]);
-    const changes: Record<string, { from: any; to: any }> = {};
+  if (!fromCurrency || !toCurrency) {
+    console.error('Currency codes are required');
+    return null;
+  }
 
-    keys.forEach((k) => {
-      const a = (prev as any)[k] instanceof Date ? (prev as any)[k].getTime() : (prev as any)[k];
-      const b = (next as any)[k] instanceof Date ? (next as any)[k].getTime() : (next as any)[k];
-      if (!Object.is(a, b)) changes[k] = { from: a, to: b };
-    });
+  if (!exchangeRates || !Array.isArray(exchangeRates) || exchangeRates.length === 0) {
+    console.error('Invalid exchange rates data');
+    return null;
+  }
 
-    if (Object.keys(changes).length === 0 && prevRef.current !== value) {
-      // ref changed but shallowly equal — likely a spread/clone
-      // useful to catch “{...proposal}” recreations
-      // eslint-disable-next-line no-console
-      console.log(`[${label}] ref changed but shallowly equal`);
-    } else if (Object.keys(changes).length) {
-      // eslint-disable-next-line no-console
-      console.table(changes);
-    }
+  // Normalize currency codes to uppercase
+  const from = fromCurrency.trim().toUpperCase();
+  const to = toCurrency.trim().toUpperCase();
 
-    prevRef.current = value;
-  }, [label, value]);
+  // If same currency, return original amount
+  if (from === to) {
+    return amount;
+  }
+
+  // Special case: If converting from USD
+  if (from === 'USD') {
+    const toRate = findExchangeRate(to, exchangeRates);
+    if (!toRate) return null;
+    
+    return amount * toRate.exchangerate;
+  }
+
+  // Special case: If converting to USD
+  if (to === 'USD') {
+    const fromRate = findExchangeRate(from, exchangeRates);
+    if (!fromRate) return null;
+    
+    return amount / fromRate.exchangerate;
+  }
+
+  // General case: Convert from source → USD → target
+  // Step 1: Find exchange rates for both currencies
+  const fromRate = findExchangeRate(from, exchangeRates);
+  const toRate = findExchangeRate(to, exchangeRates);
+
+  if (!fromRate || !toRate) {
+    return null;
+  }
+
+  // Step 2: Convert source currency to USD
+  const amountInUSD = amount / fromRate.exchangerate;
+
+  // Step 3: Convert USD to target currency
+  const convertedAmount = amountInUSD * toRate.exchangerate;
+
+  // Round to 2 decimal places for currency
+  return Math.round(convertedAmount * 100) / 100;
 }
+
+/**
+ * Finds exchange rate object for a given currency code
+ * 
+ * @param {string} currencyCode - Currency code to find
+ * @param {Array} exchangeRates - Array of exchange rate objects
+ * @returns {Object|null} - Exchange rate object or null if not found
+ */
+function findExchangeRate(currencyCode, exchangeRates) {
+  const rate = exchangeRates.find(
+    rate => rate.currencycode === currencyCode
+  );
+
+  if (!rate) {
+    console.error(`Exchange rate not found for currency: ${currencyCode}`);
+    return null;
+  }
+
+  return rate;
+}
+
+/**
+ * Format converted amount with currency symbol
+ * 
+ * @param {number} amount - Amount to format
+ * @param {string} currencyCode - Currency code
+ * @param {string} locale - Locale for formatting (default: 'en-US')
+ * @returns {string} - Formatted currency string
+ */
+function formatCurrency(amount, currencyCode, locale = 'en-US') {
+  if (amount === null || amount === undefined) {
+    return 'N/A';
+  }
+
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency: currencyCode,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(amount);
+  } catch (error) {
+    console.error('Error formatting currency:', error);
+    return `${currencyCode} ${amount.toFixed(2)}`;
+  }
+}
+
+/**
+ * Get currency description from exchange rates
+ * 
+ * @param {string} currencyCode - Currency code
+ * @param {Array} exchangeRates - Array of exchange rate objects
+ * @returns {string|null} - Currency description or null
+ */
+function getCurrencyDescription(currencyCode, exchangeRates) {
+  const rate = findExchangeRate(currencyCode, exchangeRates);
+  return rate ? rate.currencydescription : null;
+}
+
+/**
+ * Batch convert multiple amounts
+ * 
+ * @param {Array} amounts - Array of {amount, fromCurrency} objects
+ * @param {string} toCurrency - Target currency code
+ * @param {Array} exchangeRates - Array of exchange rate objects
+ * @returns {Array} - Array of converted amounts
+ */
+function batchConvertCurrency(amounts, toCurrency, exchangeRates) {
+  return amounts.map(item => ({
+    ...item,
+    convertedAmount: convertCurrency(
+      item.amount,
+      item.fromCurrency,
+      toCurrency,
+      exchangeRates
+    ),
+    toCurrency
+  }));
+}
+
+// ============================================
+// USAGE EXAMPLES
+// ============================================
+
+// Example exchange rates from your API
+const sampleExchangeRates = [
+  {
+    basecurrencycode: "USD",
+    currencycode: "AED",
+    currencydescription: "United Arab Emirates Dirhams",
+    exchangerate: 3.6725,
+    id: "1"
+  },
+  {
+    basecurrencycode: "USD",
+    currencycode: "AFN",
+    currencydescription: "Afghanistan Afghanis",
+    exchangerate: 68.9897214021,
+    id: "2"
+  },
+  {
+    basecurrencycode: "USD",
+    currencycode: "AMD",
+    currencydescription: "Armenia Drams",
+    exchangerate: 383.4441914983,
+    id: "4"
+  },
+  {
+    basecurrencycode: "USD",
+    currencycode: "EUR",
+    currencydescription: "Euro",
+    exchangerate: 0.85,
+    id: "10"
+  },
+  {
+    basecurrencycode: "USD",
+    currencycode: "INR",
+    currencydescription: "Indian Rupee",
+    exchangerate: 83.12,
+    id: "15"
+  }
+];
+
+// Example 1: Convert INR to EUR
+console.log('Example 1: Convert 1000 INR to EUR');
+const result1 = convertCurrency(1000, 'INR', 'EUR', sampleExchangeRates);
+console.log(`1000 INR = ${result1} EUR`);
+console.log(`Formatted: ${formatCurrency(result1, 'EUR')}\n`);
+
+// Example 2: Convert AED to INR
+console.log('Example 2: Convert 500 AED to INR');
+const result2 = convertCurrency(500, 'AED', 'INR', sampleExchangeRates);
+console.log(`500 AED = ${result2} INR`);
+console.log(`Formatted: ${formatCurrency(result2, 'INR', 'en-IN')}\n`);
+
+// Example 3: Convert from USD
+console.log('Example 3: Convert 100 USD to AMD');
+const result3 = convertCurrency(100, 'USD', 'AMD', sampleExchangeRates);
+console.log(`100 USD = ${result3} AMD\n`);
+
+// Example 4: Convert to USD
+console.log('Example 4: Convert 10000 AFN to USD');
+const result4 = convertCurrency(10000, 'AFN', 'USD', sampleExchangeRates);
+console.log(`10000 AFN = ${result4} USD\n`);
+
+// Example 5: Batch conversion
+console.log('Example 5: Batch convert multiple rates to EUR');
+const hotelRates = [
+  { amount: 1000, fromCurrency: 'INR', hotelName: 'Hotel A' },
+  { amount: 500, fromCurrency: 'AED', hotelName: 'Hotel B' },
+  { amount: 200, fromCurrency: 'USD', hotelName: 'Hotel C' }
+];
+const batchResults = batchConvertCurrency(hotelRates, 'EUR', sampleExchangeRates);
+console.log('Batch conversion results:', batchResults);
+
+// Export functions for use in your app
+export {
+  convertCurrency,
+  findExchangeRate,
+  formatCurrency,
+  getCurrencyDescription,
+  batchConvertCurrency
+};

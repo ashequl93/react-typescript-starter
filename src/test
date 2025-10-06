@@ -1,128 +1,67 @@
-'use client';
-
 import { useEffect, useRef } from 'react';
 import { signOut } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
 
-// LocalStorage keys
-const LAST_ACTIVITY_KEY = 'idle.lastActivity';
-const LOGOUT_ONCE_KEY = 'idle.logoutOnce';
+interface UseIdleTimeoutProps {
+  timeoutMs: number;
+}
 
-// Configurable idle limit (default 5 minutes)
-const ENV_IDLE = Number(process.env.NEXT_PUBLIC_IDLE_TIMEOUT_MS);
-const IDLE_LIMIT_MS: number =
-  Number.isFinite(ENV_IDLE) && ENV_IDLE! > 0 ? ENV_IDLE! : 300_000;
-
-// --- helpers (typed) ---
-const now = (): number => Date.now();
-
-const getLastActivity = (): number => {
-  const v = localStorage.getItem(LAST_ACTIVITY_KEY);
-  return v ? Number(v) : 0;
-};
-
-const setLastActivity = (t: number = now()): void => {
-  const prev = getLastActivity();
-  if (t > prev) localStorage.setItem(LAST_ACTIVITY_KEY, String(t));
-};
-
-const idleExceeded = (limitMs: number): boolean => {
-  const last = getLastActivity();
-  return !!last && now() - last >= limitMs;
-};
-
-const wasLoggedOutOnce = (): boolean =>
-  localStorage.getItem(LOGOUT_ONCE_KEY) === '1';
-
-const markLoggedOutOnce = (): void => {
-  localStorage.setItem(LOGOUT_ONCE_KEY, '1');
-};
-
-// --- component ---
-export default function IdleLogoutController(): null {
-  const guardTimerRef = useRef<number | null>(null);
+export function useIdleTimeout({ timeoutMs }: UseIdleTimeoutProps): void {
+  const router = useRouter();
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    // Initialize timestamp on first mount
-    if (!getLastActivity()) setLastActivity();
-
-    // If already idle (e.g., laptop wake), sign out immediately
-    if (!wasLoggedOutOnce() && idleExceeded(IDLE_LIMIT_MS)) {
-      markLoggedOutOnce();
-      void signOut({ callbackUrl: '/login' });
-      return;
-    }
-
-    const onActivity = (): void => {
-      if (!wasLoggedOutOnce() && idleExceeded(IDLE_LIMIT_MS)) {
-        markLoggedOutOnce();
-        void signOut({ callbackUrl: '/login' });
-        return;
-      }
-      setLastActivity();
+    const handleTimeout = async (): Promise<void> => {
+      await signOut({ redirect: false });
+      router.push('/login');
     };
 
-    // Periodic guard to catch long background periods (runs only when visible)
-    const guardTick = (): void => {
-      if (
-        !wasLoggedOutOnce() &&
-        document.visibilityState === 'visible' &&
-        idleExceeded(IDLE_LIMIT_MS)
-      ) {
-        markLoggedOutOnce();
-        void signOut({ callbackUrl: '/login' });
+    const resetTimer = (): void => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
       }
-      guardTimerRef.current = window.setTimeout(guardTick, 45_000);
-    };
-    guardTimerRef.current = window.setTimeout(guardTick, 45_000);
-
-    // Cross-tab logout sync
-    const onStorage = (e: StorageEvent): void => {
-      if (e.key === LOGOUT_ONCE_KEY && e.newValue === '1' && !wasLoggedOutOnce()) {
-        markLoggedOutOnce();
-        void signOut({ callbackUrl: '/login' });
-      }
+      timeoutRef.current = setTimeout(handleTimeout, timeoutMs);
     };
 
-    // Treat focus/visibility as activity checkpoints
-    const onFocus = (): void => onActivity();
-    const onVisibilityChange = (): void => onActivity();
-
-    // Record a final timestamp when leaving the page
-    const onPageHide = (): void => setLastActivity();
-
-    // Activity events (window)
-    const activityWindowEvents: Array<keyof WindowEventMap> = [
-      'pointerdown',
-      'mousemove',
+    // Activity events including wheel for mouse wheel scrolling
+    const events: string[] = [
+      'mousedown',
       'keydown',
-      'wheel',
-      'touchstart',
       'scroll',
+      'touchstart',
+      'click',
+      'wheel'
     ];
-    activityWindowEvents.forEach((ev) =>
-      window.addEventListener(ev, onActivity, { passive: true })
-    );
 
-    // Window/document listeners
-    window.addEventListener('focus', onFocus);
-    window.addEventListener('pagehide', onPageHide);
-    window.addEventListener('storage', onStorage);
-    document.addEventListener('visibilitychange', onVisibilityChange);
+    // Add listeners
+    events.forEach((event: string) => {
+      window.addEventListener(event, resetTimer, { passive: true });
+    });
+
+    // Start timer
+    resetTimer();
 
     // Cleanup
-    return () => {
-      if (guardTimerRef.current !== null) {
-        clearTimeout(guardTimerRef.current);
+    return (): void => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
       }
-      activityWindowEvents.forEach((ev) =>
-        window.removeEventListener(ev, onActivity)
-      );
-      window.removeEventListener('focus', onFocus);
-      window.removeEventListener('pagehide', onPageHide);
-      window.removeEventListener('storage', onStorage);
-      document.removeEventListener('visibilitychange', onVisibilityChange);
+      events.forEach((event: string) => {
+        window.removeEventListener(event, resetTimer);
+      });
     };
-  }, []);
+  }, [timeoutMs, router]);
+}
 
-  return null;
+interface IdleTimeoutProviderProps {
+  children: React.ReactNode;
+}
+
+export function IdleTimeoutProvider({ children }: IdleTimeoutProviderProps): JSX.Element {
+  // Get timeout from environment variable (in milliseconds)
+  const timeoutMs: number = Number(process.env.NEXT_PUBLIC_IDLE_TIMEOUT_MS) || 300000;
+
+  useIdleTimeout({ timeoutMs });
+  
+  return <>{children}</>;
 }

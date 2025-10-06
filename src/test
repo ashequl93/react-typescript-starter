@@ -1,259 +1,126 @@
-/**
- * Currency Conversion Utility (TypeScript)
- * Converts between any two currencies using USD as intermediate base
- */
+'use client';
 
-// Types
-interface ExchangeRate {
-  basecurrencycode: string;
-  currencycode: string;
-  currencydescription: string;
-  exchangerate: number;
-  id: string;
-}
+import { useEffect, useRef } from 'react';
+import { signOut } from 'next-auth/react';
 
 /**
- * Converts amount from one currency to another
- * 
- * @param amount - The amount to convert
- * @param fromCurrency - Source currency code (e.g., 'INR', 'EUR')
- * @param toCurrency - Target currency code (e.g., 'EUR', 'INR')
- * @param exchangeRates - Array of exchange rate objects from API
- * @returns Converted amount or null if conversion fails
- * 
- * @example
- * const rates: ExchangeRate[] = [...]; // Your API response
- * const result = convertCurrency(1000, 'INR', 'EUR', rates);
+ * Sliding idle timeout (industry standard):
+ * - Cross-tab awareness via localStorage
+ * - Signs out after true inactivity >= IDLE_LIMIT_MS
+ * - Immediate sign-out on first activity after timeout OR on periodic guard tick
+ * - No dependency on SessionProvider
  */
-function convertCurrency(
-  amount: number,
-  fromCurrency: string,
-  toCurrency: string,
-  exchangeRates: ExchangeRate[]
-): number | null {
-  // Validation: Check if inputs are valid
-  if (!amount || typeof amount !== 'number' || amount < 0) {
-    console.error('Invalid amount provided');
-    return null;
-  }
 
-  if (!fromCurrency || !toCurrency) {
-    console.error('Currency codes are required');
-    return null;
-  }
+const LAST_ACTIVITY_KEY = 'idle.lastActivity';
+const LOGOUT_ONCE_KEY = 'idle.logoutOnce';
 
-  if (!exchangeRates || !Array.isArray(exchangeRates) || exchangeRates.length === 0) {
-    console.error('Invalid exchange rates data');
-    return null;
-  }
+// Configure via env if you like, with a safe default (5 minutes)
+const IDLE_LIMIT_MS =
+  Number(process.env.NEXT_PUBLIC_IDLE_TIMEOUT_MS ?? 300_000) || 300_000;
 
-  // Normalize currency codes to uppercase
-  const from = fromCurrency.trim().toUpperCase();
-  const to = toCurrency.trim().toUpperCase();
-
-  // If same currency, return original amount
-  if (from === to) {
-    return amount;
-  }
-
-  // Special case: If converting from USD
-  if (from === 'USD') {
-    const toRate = findExchangeRate(to, exchangeRates);
-    if (!toRate) return null;
-    
-    return amount * toRate.exchangerate;
-  }
-
-  // Special case: If converting to USD
-  if (to === 'USD') {
-    const fromRate = findExchangeRate(from, exchangeRates);
-    if (!fromRate) return null;
-    
-    return amount / fromRate.exchangerate;
-  }
-
-  // General case: Convert from source → USD → target
-  // Step 1: Find exchange rates for both currencies
-  const fromRate = findExchangeRate(from, exchangeRates);
-  const toRate = findExchangeRate(to, exchangeRates);
-
-  if (!fromRate || !toRate) {
-    return null;
-  }
-
-  // Step 2: Convert source currency to USD
-  const amountInUSD = amount / fromRate.exchangerate;
-
-  // Step 3: Convert USD to target currency
-  const convertedAmount = amountInUSD * toRate.exchangerate;
-
-  // Return without rounding for precision
-  return convertedAmount;
+function now() {
+  return Date.now();
 }
 
-/**
- * Finds exchange rate object for a given currency code
- * 
- * @param currencyCode - Currency code to find
- * @param exchangeRates - Array of exchange rate objects
- * @returns Exchange rate object or null if not found
- */
-function findExchangeRate(
-  currencyCode: string,
-  exchangeRates: ExchangeRate[]
-): ExchangeRate | null {
-  const rate = exchangeRates.find(
-    rate => rate.currencycode === currencyCode
-  );
-
-  if (!rate) {
-    console.error(`Exchange rate not found for currency: ${currencyCode}`);
-    return null;
-  }
-
-  return rate;
+function getLastActivity(): number {
+  const v = localStorage.getItem(LAST_ACTIVITY_KEY);
+  return v ? Number(v) : 0;
 }
 
-/**
- * Format converted amount with currency symbol
- * 
- * @param amount - Amount to format
- * @param currencyCode - Currency code
- * @param locale - Locale for formatting (default: 'en-US')
- * @returns Formatted currency string
- */
-function formatCurrency(
-  amount: number | null,
-  currencyCode: string,
-  locale: string = 'en-US'
-): string {
-  if (amount === null || amount === undefined) {
-    return 'N/A';
-  }
-
-  try {
-    return new Intl.NumberFormat(locale, {
-      style: 'currency',
-      currency: currencyCode,
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    }).format(amount);
-  } catch (error) {
-    console.error('Error formatting currency:', error);
-    return `${currencyCode} ${amount.toFixed(2)}`;
-  }
+function setLastActivity(t = now()) {
+  const prev = getLastActivity();
+  if (t > prev) localStorage.setItem(LAST_ACTIVITY_KEY, String(t));
 }
 
-/**
- * Get currency description from exchange rates
- * 
- * @param currencyCode - Currency code
- * @param exchangeRates - Array of exchange rate objects
- * @returns Currency description or null
- */
-function getCurrencyDescription(
-  currencyCode: string,
-  exchangeRates: ExchangeRate[]
-): string | null {
-  const rate = findExchangeRate(currencyCode, exchangeRates);
-  return rate ? rate.currencydescription : null;
+function idleExceeded(): boolean {
+  const last = getLastActivity();
+  if (!last) return false;
+  return now() - last >= IDLE_LIMIT_MS;
 }
 
-/**
- * Batch convert multiple amounts
- * 
- * @param amounts - Array of {amount, fromCurrency} objects
- * @param toCurrency - Target currency code
- * @param exchangeRates - Array of exchange rate objects
- * @returns Array of converted amounts
- */
-function batchConvertCurrency(
-  amounts: BatchConversionInput[],
-  toCurrency: string,
-  exchangeRates: ExchangeRate[]
-): BatchConversionOutput[] {
-  return amounts.map(item => ({
-    ...item,
-    convertedAmount: convertCurrency(
-      item.amount,
-      item.fromCurrency,
-      toCurrency,
-      exchangeRates
-    ),
-    toCurrency
-  }));
+function markLoggedOutOnce() {
+  localStorage.setItem(LOGOUT_ONCE_KEY, '1');
+}
+function wasLoggedOutOnce() {
+  return localStorage.getItem(LOGOUT_ONCE_KEY) === '1';
 }
 
-// ============================================
-// USAGE EXAMPLES
-// ============================================
+export default function IdleLogoutController() {
+  const guardTimer = useRef<number | null>(null);
 
-// Example exchange rates from your API
-const sampleExchangeRates: ExchangeRate[] = [
-  {
-    basecurrencycode: "USD",
-    currencycode: "AED",
-    currencydescription: "United Arab Emirates Dirhams",
-    exchangerate: 3.6725,
-    id: "1"
-  },
-  {
-    basecurrencycode: "USD",
-    currencycode: "AFN",
-    currencydescription: "Afghanistan Afghanis",
-    exchangerate: 68.9897214021,
-    id: "2"
-  },
-  {
-    basecurrencycode: "USD",
-    currencycode: "AMD",
-    currencydescription: "Armenia Drams",
-    exchangerate: 383.4441914983,
-    id: "4"
-  },
-  {
-    basecurrencycode: "USD",
-    currencycode: "EUR",
-    currencydescription: "Euro",
-    exchangerate: 0.85,
-    id: "10"
-  },
-  {
-    basecurrencycode: "USD",
-    currencycode: "INR",
-    currencydescription: "Indian Rupee",
-    exchangerate: 83.12,
-    id: "15"
-  }
-];
+  useEffect(() => {
+    // Seed baseline last-activity on first mount
+    if (!getLastActivity()) setLastActivity();
 
-// Example 1: Convert INR to EUR
-console.log('Example 1: Convert 1000 INR to EUR');
-const result1 = convertCurrency(1000, 'INR', 'EUR', sampleExchangeRates);
-console.log(`1000 INR = ${result1} EUR`);
-console.log(`Formatted: ${formatCurrency(result1, 'EUR')}\n`);
+    // If we already exceeded while the tab was sleeping, sign out now
+    if (!wasLoggedOutOnce() && idleExceeded()) {
+      markLoggedOutOnce();
+      // callbackUrl -> your login page or landing page
+      signOut({ callbackUrl: '/login' });
+      return;
+    }
 
-// Example 2: Convert AED to INR
-console.log('Example 2: Convert 500 AED to INR');
-const result2 = convertCurrency(500, 'AED', 'INR', sampleExchangeRates);
-console.log(`500 AED = ${result2} INR`);
-console.log(`Formatted: ${formatCurrency(result2, 'INR', 'en-IN')}\n`);
+    // Any user activity: if already timed out -> sign out; else reset last-activity
+    const onActivity = () => {
+      if (!wasLoggedOutOnce() && idleExceeded()) {
+        markLoggedOutOnce();
+        signOut({ callbackUrl: '/login' });
+        return;
+      }
+      setLastActivity();
+    };
 
-// Example 3: Convert from USD
-console.log('Example 3: Convert 100 USD to AMD');
-const result3 = convertCurrency(100, 'USD', 'AMD', sampleExchangeRates);
-console.log(`100 USD = ${result3} AMD\n`);
+    // Periodic guard: catches long background idle (no events fired)
+    const tick = () => {
+      if (!wasLoggedOutOnce() &&
+          document.visibilityState === 'visible' &&
+          idleExceeded()) {
+        markLoggedOutOnce();
+        signOut({ callbackUrl: '/login' });
+      }
+      // Run ~every 45s (low overhead, fast enough UX)
+      guardTimer.current = window.setTimeout(tick, 45_000) as unknown as number;
+    };
+    guardTimer.current = window.setTimeout(tick, 45_000) as unknown as number;
 
-// Example 4: Convert to USD
-console.log('Example 4: Convert 10000 AFN to USD');
-const result4 = convertCurrency(10000, 'AFN', 'USD', sampleExchangeRates);
-console.log(`10000 AFN = ${result4} USD\n`);
+    // Cross-tab sync: if another tab logs out, mirror here
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === LOGOUT_ONCE_KEY && e.newValue === '1' && !wasLoggedOutOnce()) {
+        markLoggedOutOnce();
+        signOut({ callbackUrl: '/login' });
+      }
+      // LAST_ACTIVITY_KEY writes are passive; we just read them when needed
+    };
 
-// Export functions and types for use in your app
-export type { ExchangeRate };
-export {
-  convertCurrency,
-  findExchangeRate,
-  formatCurrency,
-  getCurrencyDescription
-};
+    // Treat focus/visibility as "activity" moments (also triggers immediate sign-out if exceeded)
+    const onFocus = onActivity;
+    const onVisible = () => onActivity();
+
+    // Record a final timestamp as we leave (helps avoid false idle across quick navigations)
+    const onPageHide = () => setLastActivity();
+
+    const activityEvents: (keyof DocumentEventMap | keyof WindowEventMap)[] = [
+      'pointerdown', 'mousemove', 'keydown', 'wheel', 'touchstart', 'scroll'
+    ];
+    activityEvents.forEach(ev =>
+      window.addEventListener(ev as any, onActivity, { passive: true })
+    );
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('storage', onStorage);
+
+    return () => {
+      if (guardTimer.current) clearTimeout(guardTimer.current as unknown as number);
+      activityEvents.forEach(ev =>
+        window.removeEventListener(ev as any, onActivity as any)
+      );
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
+  return null;
+}

@@ -3,16 +3,16 @@
 import { useEffect, useRef } from 'react';
 import { signOut } from 'next-auth/react';
 
-// Keys in localStorage
+// LocalStorage keys
 const LAST_ACTIVITY_KEY = 'idle.lastActivity';
 const LOGOUT_ONCE_KEY = 'idle.logoutOnce';
 
-// Read from env (string | undefined) -> number with safe fallback
+// Configurable idle limit (default 5 minutes)
 const ENV_IDLE = Number(process.env.NEXT_PUBLIC_IDLE_TIMEOUT_MS);
 const IDLE_LIMIT_MS: number =
-  Number.isFinite(ENV_IDLE) && ENV_IDLE! > 0 ? ENV_IDLE! : 300_000; // default 5 minutes
+  Number.isFinite(ENV_IDLE) && ENV_IDLE! > 0 ? ENV_IDLE! : 300_000;
 
-// ---- Helpers (typed) ----
+// --- helpers (typed) ---
 const now = (): number => Date.now();
 
 const getLastActivity = (): number => {
@@ -27,8 +27,7 @@ const setLastActivity = (t: number = now()): void => {
 
 const idleExceeded = (limitMs: number): boolean => {
   const last = getLastActivity();
-  if (!last) return false;
-  return now() - last >= limitMs;
+  return !!last && now() - last >= limitMs;
 };
 
 const wasLoggedOutOnce = (): boolean =>
@@ -38,23 +37,21 @@ const markLoggedOutOnce = (): void => {
   localStorage.setItem(LOGOUT_ONCE_KEY, '1');
 };
 
-// ---- Component ----
+// --- component ---
 export default function IdleLogoutController(): null {
-  // In the browser (DOM lib), setTimeout returns number
   const guardTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
-    // Seed baseline timestamp on first mount
+    // Initialize timestamp on first mount
     if (!getLastActivity()) setLastActivity();
 
-    // If already beyond idle when mounting (e.g., laptop wake), sign out
+    // If already idle (e.g., laptop wake), sign out immediately
     if (!wasLoggedOutOnce() && idleExceeded(IDLE_LIMIT_MS)) {
       markLoggedOutOnce();
       void signOut({ callbackUrl: '/login' });
       return;
     }
 
-    // Any user activity: if timed out -> sign out; else update last activity
     const onActivity = (): void => {
       if (!wasLoggedOutOnce() && idleExceeded(IDLE_LIMIT_MS)) {
         markLoggedOutOnce();
@@ -64,7 +61,7 @@ export default function IdleLogoutController(): null {
       setLastActivity();
     };
 
-    // Periodic guard: catches long background idle (no events fired)
+    // Periodic guard to catch long background periods (runs only when visible)
     const guardTick = (): void => {
       if (
         !wasLoggedOutOnce() &&
@@ -78,28 +75,22 @@ export default function IdleLogoutController(): null {
     };
     guardTimerRef.current = window.setTimeout(guardTick, 45_000);
 
-    // Cross-tab: if another tab logs out, mirror here
+    // Cross-tab logout sync
     const onStorage = (e: StorageEvent): void => {
       if (e.key === LOGOUT_ONCE_KEY && e.newValue === '1' && !wasLoggedOutOnce()) {
         markLoggedOutOnce();
         void signOut({ callbackUrl: '/login' });
       }
-      // LAST_ACTIVITY_KEY updates are passively read via helpers when needed
     };
 
-    // Treat focus/visibility as activity (also triggers sign-out if exceeded)
+    // Treat focus/visibility as activity checkpoints
     const onFocus = (): void => onActivity();
     const onVisibilityChange = (): void => onActivity();
 
     // Record a final timestamp when leaving the page
     const onPageHide = (): void => setLastActivity();
 
-    // Register listeners with strict types
-    const windowEvents: Array<keyof WindowEventMap> = [
-      'focus',
-      'pagehide',
-      'storage', // note: 'storage' is a WindowEvent (fires on *other* tabs)
-    ];
+    // Activity events (window)
     const activityWindowEvents: Array<keyof WindowEventMap> = [
       'pointerdown',
       'mousemove',
@@ -108,19 +99,14 @@ export default function IdleLogoutController(): null {
       'touchstart',
       'scroll',
     ];
-    const documentEvents: Array<keyof DocumentEventMap> = ['visibilitychange'];
-
-    // Activity listeners (window)
     activityWindowEvents.forEach((ev) =>
       window.addEventListener(ev, onActivity, { passive: true })
     );
 
-    // Window listeners
+    // Window/document listeners
     window.addEventListener('focus', onFocus);
     window.addEventListener('pagehide', onPageHide);
     window.addEventListener('storage', onStorage);
-
-    // Document listeners
     document.addEventListener('visibilitychange', onVisibilityChange);
 
     // Cleanup
@@ -129,15 +115,12 @@ export default function IdleLogoutController(): null {
         clearTimeout(guardTimerRef.current);
       }
       activityWindowEvents.forEach((ev) =>
-        window.removeEventListener(ev, onActivity as EventListenerOrEventListenerObject)
+        window.removeEventListener(ev, onActivity)
       );
-      window.removeEventListener('focus', onFocus as EventListenerOrEventListenerObject);
-      window.removeEventListener('pagehide', onPageHide as EventListenerOrEventListenerObject);
-      window.removeEventListener('storage', onStorage as EventListenerOrEventListenerObject);
-      document.removeEventListener(
-        'visibilitychange',
-        onVisibilityChange as EventListenerOrEventListenerObject
-      );
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('storage', onStorage);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, []);
 

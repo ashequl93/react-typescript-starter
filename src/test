@@ -1,67 +1,105 @@
-import { useEffect, useRef } from 'react';
-import { signOut } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
+// components/ContentfulRichText.tsx
+import { documentToReactComponents, type Options } from '@contentful/rich-text-react-renderer';
+import type { Document } from '@contentful/rich-text-types';
 
-interface UseIdleTimeoutProps {
-  timeoutMs: number;
+type GraphqlRichText = { json: unknown };     // GraphQL wrapper
+type RestRichText    = { raw: string };       // REST wrapper
+
+type RichTextLike =
+  | Document
+  | GraphqlRichText
+  | RestRichText
+  | string
+  | null
+  | undefined;
+
+interface ContentfulRichTextProps {
+  className?: string;
+  json?: RichTextLike;
+  options?: Options;
 }
 
-export function useIdleTimeout({ timeoutMs }: UseIdleTimeoutProps): void {
-  const router = useRouter();
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+/* ------------------------ type guards ------------------------ */
 
-  useEffect(() => {
-    const handleTimeout = async (): Promise<void> => {
-      await signOut({ redirect: false });
-      router.push('/login');
-    };
-
-    const resetTimer = (): void => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-      timeoutRef.current = setTimeout(handleTimeout, timeoutMs);
-    };
-
-    // Activity events including wheel for mouse wheel scrolling
-    const events: string[] = [
-      'mousedown',
-      'keydown',
-      'scroll',
-      'touchstart',
-      'click',
-      'wheel'
-    ];
-
-    // Add listeners
-    events.forEach((event: string) => {
-      window.addEventListener(event, resetTimer, { passive: true });
-    });
-
-    // Start timer
-    resetTimer();
-
-    // Cleanup
-    return (): void => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-      events.forEach((event: string) => {
-        window.removeEventListener(event, resetTimer);
-      });
-    };
-  }, [timeoutMs, router]);
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
-interface IdleTimeoutProviderProps {
-  children: React.ReactNode;
+function hasKey<K extends string>(
+  value: unknown,
+  key: K
+): value is Record<K, unknown> {
+  return isObject(value) && key in value;
 }
 
-export function IdleTimeoutProvider({ children }: IdleTimeoutProviderProps): JSX.Element {
-  // Get timeout from environment variable (in milliseconds)
-  const timeoutMs: number = Number(process.env.NEXT_PUBLIC_IDLE_TIMEOUT_MS) || 300000;
-
-  useIdleTimeout({ timeoutMs });
-  
-  return <>{children}</>;
+function isDocument(value: unknown): value is Document {
+  return (
+    isObject(value) &&
+    value['nodeType'] === 'document' &&
+    Array.isArray(value['content'])
+  );
 }
+
+function isRestRichText(value: unknown): value is RestRichText {
+  return hasKey(value, 'raw') && typeof value.raw === 'string';
+}
+
+function isGraphqlRichText(value: unknown): value is GraphqlRichText {
+  return hasKey(value, 'json'); // inner type is unknown; we’ll recurse
+}
+
+/* ------------------------ normalizer ------------------------ */
+
+function toDocument(input: RichTextLike): Document | null {
+  if (input == null) return null;
+
+  // 1) string → parse → recurse
+  if (typeof input === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(input);
+      return toDocument(parsed as RichTextLike); // safe: we guard again
+    } catch {
+      return null;
+    }
+  }
+
+  // 2) already a Document
+  if (isDocument(input)) return input;
+
+  // 3) REST { raw: string }
+  if (isRestRichText(input)) {
+    try {
+      const parsed: unknown = JSON.parse(input.raw);
+      return toDocument(parsed as RichTextLike);
+    } catch {
+      return null;
+    }
+  }
+
+  // 4) GraphQL { json: ... } (may be nested)
+  if (isGraphqlRichText(input)) {
+    return toDocument(input.json as RichTextLike);
+  }
+
+  return null;
+}
+
+/* ------------------------ component ------------------------ */
+
+export function ContentfulRichText({
+  className,
+  json,
+  options,
+  ...rest
+}: Readonly<ContentfulRichTextProps>) {
+  const doc = toDocument(json);
+
+  return (
+    <div {...rest} className={className}>
+      {doc ? documentToReactComponents(doc, options) : null}
+    </div>
+  );
+}
+
+// Optional: export the normalizer if you want to reuse upstream
+export { toDocument };

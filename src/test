@@ -1,136 +1,66 @@
-"use client";
+useEffect(() => {
+  if (!map) return;
+  if (disabled) return;
+  if (!containerRef.current) return;
+  if (!window.google?.maps?.ControlPosition) return;
 
-import React, { useContext, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { GoogleMapContext } from "./GoogleMapContext";
+  const el = containerRef.current;
 
-type MapControlProps = {
-  position: google.maps.ControlPosition;
-  children: React.ReactNode;
-  /** Optional: order among other controls in the same position */
-  index?: number;
-  /** Optional: className applied to the root control container */
-  className?: string;
-  /** Optional: disable adding to map while keeping children unmounted */
-  disabled?: boolean;
-};
+  const normalizedPos =
+    typeof position === "string"
+      ? window.google.maps.ControlPosition[position]
+      : position;
 
-export function MapControl({
-  position,
-  children,
-  index,
-  className,
-  disabled,
-}: MapControlProps) {
-  const map = useContext(GoogleMapContext);
+  if (normalizedPos === undefined) {
+    console.error("Invalid control position:", position);
+    return;
+  }
 
-  // The DOM node we hand to Google Maps controls API.
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  // If already inserted somewhere else, remove first.
+  if (
+    insertedPosRef.current !== null &&
+    insertedPosRef.current !== normalizedPos
+  ) {
+    const oldPos = insertedPosRef.current;
+    const oldArray = map.controls[oldPos];
+    const oldIdx = oldArray.getArray().indexOf(el);
+    if (oldIdx >= 0) oldArray.removeAt(oldIdx);
+    insertedPosRef.current = null;
+  }
 
-  // Track where we inserted it so we can remove precisely.
-  const insertedPosRef = useRef<google.maps.ControlPosition | null>(null);
+  // Insert if not already inserted.
+  if (insertedPosRef.current === null) {
+    const arr = map.controls[normalizedPos];
 
-  // In some flows, map may exist before our container is created.
-  const [containerReady, setContainerReady] = useState(false);
-
-  // Create container once (client-only).
-  useEffect(() => {
-    const el = document.createElement("div");
-    if (className) el.className = className;
-
-    containerRef.current = el;
-    setContainerReady(true);
-
-    return () => {
-      // If we ever unmount, ensure we remove from map controls too.
-      // (This is a safety net; we also remove in the insertion effect cleanup.)
-      containerRef.current = null;
-    };
-    // NOTE: we intentionally do NOT depend on className here
-    // to avoid recreating container and losing the portal root.
-    // className updates are handled in a separate effect below.
-  }, []);
-
-  // Keep className updated without recreating container.
-  useEffect(() => {
-    if (!containerRef.current) return;
-    containerRef.current.className = className ?? "";
-  }, [className]);
-
-  // Insert/remove into Google Maps controls
-  useEffect(() => {
-    if (!map) return;
-    if (disabled) return;
-    if (!containerRef.current) return;
-
-    const el = containerRef.current;
-
-    // If already inserted somewhere else, remove first.
-    if (insertedPosRef.current !== null && insertedPosRef.current !== position) {
-      const oldPos = insertedPosRef.current;
-      const oldArray = map.controls[oldPos];
-      const oldIdx = oldArray.getArray().indexOf(el);
-      if (oldIdx >= 0) oldArray.removeAt(oldIdx);
-      insertedPosRef.current = null;
-    }
-
-    // Insert if not already inserted.
-    if (insertedPosRef.current === null) {
-      const arr = map.controls[position];
-
-      if (typeof index === "number") {
-        // insertAt clamps internally, but we can be safe:
-        const safeIndex = Math.max(0, Math.min(index, arr.getLength()));
-        arr.insertAt(safeIndex, el);
-      } else {
-        arr.push(el);
-      }
-
-      insertedPosRef.current = position;
+    if (typeof index === "number") {
+      const safeIndex = Math.max(0, Math.min(index, arr.getLength()));
+      arr.insertAt(safeIndex, el);
     } else {
-      // Already inserted at same position. If index changes, reposition it.
-      if (typeof index === "number") {
-        const arr = map.controls[position];
-        const currentIdx = arr.getArray().indexOf(el);
-        const desiredIdx = Math.max(0, Math.min(index, arr.getLength() - 1));
-
-        if (currentIdx !== -1 && currentIdx !== desiredIdx) {
-          // Remove and re-insert at desired index
-          arr.removeAt(currentIdx);
-          arr.insertAt(desiredIdx, el);
-        }
-      }
+      arr.push(el);
     }
 
-    return () => {
-      // Cleanup: remove from whatever position we inserted into.
-      const insertedPos = insertedPosRef.current;
-      if (insertedPos === null) return;
-      const arr = map.controls[insertedPos];
-      const i = arr.getArray().indexOf(el);
-      if (i >= 0) arr.removeAt(i);
-      insertedPosRef.current = null;
-    };
-  }, [map, position, index, disabled]);
+    insertedPosRef.current = normalizedPos;
+  } else {
+    // Already inserted at same position. If index changes, reposition it.
+    if (typeof index === "number") {
+      const arr = map.controls[normalizedPos];
+      const currentIdx = arr.getArray().indexOf(el);
+      const desiredIdx = Math.max(0, Math.min(index, arr.getLength() - 1));
 
-  // If disabled, ensure it's removed immediately (and don't render children)
-  useEffect(() => {
-    if (!map) return;
-    if (!containerRef.current) return;
+      if (currentIdx !== -1 && currentIdx !== desiredIdx) {
+        arr.removeAt(currentIdx);
+        arr.insertAt(desiredIdx, el);
+      }
+    }
+  }
 
-    if (!disabled) return;
+  return () => {
+    const pos = insertedPosRef.current;
+    if (pos === null) return;
 
-    const insertedPos = insertedPosRef.current;
-    if (insertedPos === null) return;
-
-    const arr = map.controls[insertedPos];
-    const i = arr.getArray().indexOf(containerRef.current);
+    const arr = map.controls[pos];
+    const i = arr.getArray().indexOf(el);
     if (i >= 0) arr.removeAt(i);
     insertedPosRef.current = null;
-  }, [disabled, map]);
-
-  if (!containerReady || disabled || !containerRef.current) return null;
-
-  // Portal renders your React children into the DOM node Google positions.
-  return createPortal(children, containerRef.current);
-}
+  };
+}, [map, disabled, position, index]);

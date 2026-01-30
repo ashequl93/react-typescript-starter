@@ -1,50 +1,130 @@
-useEffect(() => {
-  const map = mapRef.current;
-  if (!map) return;
-  if (!window.google?.maps?.ControlPosition) return;
+"use client";
 
-  const CP = window.google.maps.ControlPosition;
+import React, { useContext, useEffect, useRef } from "react";
+import { GoogleMapContext } from "./googleMapContext";
 
-  const toPos = (p?: ControlPositionName) => (p ? CP[p] : undefined);
+type ControlPositionName =
+  | "TOP_LEFT" | "TOP_CENTER" | "TOP_RIGHT"
+  | "LEFT_TOP" | "RIGHT_TOP" | "LEFT_CENTER" | "RIGHT_CENTER"
+  | "LEFT_BOTTOM" | "RIGHT_BOTTOM"
+  | "BOTTOM_LEFT" | "BOTTOM_CENTER" | "BOTTOM_RIGHT";
 
-  map.setOptions({
-    // enable/disable
-    cameraControl: controls?.cameraControl?.enabled,
-    mapTypeControl: controls?.mapTypeControl?.enabled,
-    scaleControl: controls?.scaleControl?.enabled,
-    zoomControl: controls?.zoomControl?.enabled,
-    fullscreenControl: controls?.fullscreenControl?.enabled,
+type MapControlProps = {
+  position: ControlPositionName | google.maps.ControlPosition;
+  index?: number;
+  disabled?: boolean;
+  className?: string;
+  children: React.ReactNode;
+};
 
-    // ✅ options objects (not raw position)
-    cameraControlOptions: controls?.cameraControl?.position
-      ? { position: toPos(controls.cameraControl.position) }
-      : undefined,
+export function MapControl({
+  position,
+  index,
+  disabled,
+  className,
+  children,
+}: MapControlProps) {
+  const map = useContext(GoogleMapContext);
 
-    mapTypeControlOptions: controls?.mapTypeControl?.position
-      ? { position: toPos(controls.mapTypeControl.position) }
-      : undefined,
+  // React-owned node (no document.createElement, no portal)
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
-    scaleControlOptions: controls?.scaleControl?.position
-      ? { position: toPos(controls.scaleControl.position) }
-      : undefined,
+  // Remember where we inserted it so we can remove/move safely
+  const insertedPosRef = useRef<google.maps.ControlPosition | null>(null);
 
-    zoomControlOptions: controls?.zoomControl?.position
-      ? { position: toPos(controls.zoomControl.position) }
-      : undefined,
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!map) return;
+    if (disabled) return;
+    if (!el) return;
+    if (!window.google?.maps?.ControlPosition) return;
 
-    fullscreenControlOptions: controls?.fullscreenControl?.position
-      ? { position: toPos(controls.fullscreenControl.position) }
-      : undefined,
-  });
-}, [
-  controls?.cameraControl?.enabled,
-  controls?.cameraControl?.position,
-  controls?.mapTypeControl?.enabled,
-  controls?.mapTypeControl?.position,
-  controls?.scaleControl?.enabled,
-  controls?.scaleControl?.position,
-  controls?.zoomControl?.enabled,
-  controls?.zoomControl?.position,
-  controls?.fullscreenControl?.enabled,
-  controls?.fullscreenControl?.position,
-]);
+    const normalizedPos =
+      typeof position === "string"
+        ? window.google.maps.ControlPosition[position]
+        : position;
+
+    if (normalizedPos === undefined) {
+      console.error("Invalid control position:", position);
+      return;
+    }
+
+    // If already inserted somewhere else, remove first
+    if (insertedPosRef.current !== null && insertedPosRef.current !== normalizedPos) {
+      const oldPos = insertedPosRef.current;
+      const oldArr = map.controls[oldPos];
+      const oldIdx = oldArr.getArray().indexOf(el);
+      if (oldIdx >= 0) oldArr.removeAt(oldIdx);
+      insertedPosRef.current = null;
+    }
+
+    // Insert if not already inserted
+    if (insertedPosRef.current === null) {
+      const arr = map.controls[normalizedPos];
+
+      // Make it visible once inserted
+      el.hidden = false;
+
+      if (typeof index === "number") {
+        const safeIndex = Math.max(0, Math.min(index, arr.getLength()));
+        arr.insertAt(safeIndex, el);
+      } else {
+        arr.push(el);
+      }
+
+      insertedPosRef.current = normalizedPos;
+    } else {
+      // Already inserted at same position. If index changes, reposition.
+      if (typeof index === "number") {
+        const arr = map.controls[normalizedPos];
+        const currentIdx = arr.getArray().indexOf(el);
+        const desiredIdx = Math.max(0, Math.min(index, arr.getLength() - 1));
+
+        if (currentIdx !== -1 && currentIdx !== desiredIdx) {
+          arr.removeAt(currentIdx);
+          arr.insertAt(desiredIdx, el);
+        }
+      }
+    }
+
+    return () => {
+      const pos = insertedPosRef.current;
+      if (pos === null) return;
+
+      const arr = map.controls[pos];
+      const i = arr.getArray().indexOf(el);
+      if (i >= 0) arr.removeAt(i);
+
+      insertedPosRef.current = null;
+
+      // Hide again when removed
+      el.hidden = true;
+    };
+  }, [map, disabled, position, index]);
+
+  // If disabled, remove immediately if it was inserted (optional safety)
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!map) return;
+    if (!el) return;
+
+    if (!disabled) return;
+
+    const pos = insertedPosRef.current;
+    if (pos === null) return;
+
+    const arr = map.controls[pos];
+    const i = arr.getArray().indexOf(el);
+    if (i >= 0) arr.removeAt(i);
+
+    insertedPosRef.current = null;
+    el.hidden = true;
+  }, [disabled, map]);
+
+  // Always render a host node (React controls children)
+  return (
+    <div ref={containerRef} className={className} hidden>
+      {!disabled ? children : null}
+    </div>
+  );
+}

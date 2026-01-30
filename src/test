@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useContext, useEffect, useRef } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { GoogleMapContext } from "./googleMapContext";
 
 type ControlPositionName =
@@ -9,7 +10,7 @@ type ControlPositionName =
   | "LEFT_BOTTOM" | "RIGHT_BOTTOM"
   | "BOTTOM_LEFT" | "BOTTOM_CENTER" | "BOTTOM_RIGHT";
 
-type MapControlProps = {
+export type MapControlProps = {
   position: ControlPositionName | google.maps.ControlPosition;
   index?: number;
   disabled?: boolean;
@@ -26,12 +27,31 @@ export function MapControl({
 }: MapControlProps) {
   const map = useContext(GoogleMapContext);
 
-  // React-owned node (no document.createElement, no portal)
   const containerRef = useRef<HTMLDivElement | null>(null);
-
-  // Remember where we inserted it so we can remove/move safely
+  const rootRef = useRef<Root | null>(null);
   const insertedPosRef = useRef<google.maps.ControlPosition | null>(null);
 
+  // 1) Create container once
+  useEffect(() => {
+    const el = document.createElement("div");
+    containerRef.current = el;
+
+    return () => {
+      // Unmount React root if it exists
+      rootRef.current?.unmount();
+      rootRef.current = null;
+
+      containerRef.current = null;
+    };
+  }, []);
+
+  // 2) Keep className in sync
+  useEffect(() => {
+    if (!containerRef.current) return;
+    containerRef.current.className = className ?? "";
+  }, [className]);
+
+  // 3) Insert/remove container in Google controls (same logic as before)
   useEffect(() => {
     const el = containerRef.current;
     if (!map) return;
@@ -50,7 +70,10 @@ export function MapControl({
     }
 
     // If already inserted somewhere else, remove first
-    if (insertedPosRef.current !== null && insertedPosRef.current !== normalizedPos) {
+    if (
+      insertedPosRef.current !== null &&
+      insertedPosRef.current !== normalizedPos
+    ) {
       const oldPos = insertedPosRef.current;
       const oldArr = map.controls[oldPos];
       const oldIdx = oldArr.getArray().indexOf(el);
@@ -62,9 +85,6 @@ export function MapControl({
     if (insertedPosRef.current === null) {
       const arr = map.controls[normalizedPos];
 
-      // Make it visible once inserted
-      el.hidden = false;
-
       if (typeof index === "number") {
         const safeIndex = Math.max(0, Math.min(index, arr.getLength()));
         arr.insertAt(safeIndex, el);
@@ -74,7 +94,7 @@ export function MapControl({
 
       insertedPosRef.current = normalizedPos;
     } else {
-      // Already inserted at same position. If index changes, reposition.
+      // Already inserted at same position. If index changes, reposition it.
       if (typeof index === "number") {
         const arr = map.controls[normalizedPos];
         const currentIdx = arr.getArray().indexOf(el);
@@ -96,35 +116,29 @@ export function MapControl({
       if (i >= 0) arr.removeAt(i);
 
       insertedPosRef.current = null;
-
-      // Hide again when removed
-      el.hidden = true;
     };
   }, [map, disabled, position, index]);
 
-  // If disabled, remove immediately if it was inserted (optional safety)
+  // 4) Render children into the container (no portal)
   useEffect(() => {
     const el = containerRef.current;
-    if (!map) return;
     if (!el) return;
 
-    if (!disabled) return;
+    // If disabled, unmount any rendered UI
+    if (disabled) {
+      rootRef.current?.unmount();
+      rootRef.current = null;
+      return;
+    }
 
-    const pos = insertedPosRef.current;
-    if (pos === null) return;
+    // Create root once and render
+    if (!rootRef.current) {
+      rootRef.current = createRoot(el);
+    }
 
-    const arr = map.controls[pos];
-    const i = arr.getArray().indexOf(el);
-    if (i >= 0) arr.removeAt(i);
+    rootRef.current.render(<>{children}</>);
+  }, [children, disabled]);
 
-    insertedPosRef.current = null;
-    el.hidden = true;
-  }, [disabled, map]);
-
-  // Always render a host node (React controls children)
-  return (
-    <div ref={containerRef} className={className} hidden>
-      {!disabled ? children : null}
-    </div>
-  );
+  // React should not own the DOM placement, so render nothing
+  return null;
 }

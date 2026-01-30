@@ -1,66 +1,52 @@
-useEffect(() => {
-  if (!map) return;
-  if (disabled) return;
-  if (!containerRef.current) return;
-  if (!window.google?.maps?.ControlPosition) return;
+function renderViewToggle({
+  wrapperClassName,
+  icon,
+  label,
+  onClick,
+}: {
+  wrapperClassName: string;
+  icon?: React.ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <div className={wrapperClassName}>
+      <Button
+        className={styles.viewControlLabel}
+        icon={icon}
+        iconPosition="start"
+        priority="tertiary"
+        onClick={onClick}
+      >
+        {label}
+      </Button>
+    </div>
+  );
+}
 
-  const el = containerRef.current;
+function renderPanelViewInDesktop() {
+  return renderViewToggle({
+    wrapperClassName: styles.desktopPanel,
+    icon:
+      activePanel === "split" ? <ListIcon /> :
+      activePanel === "leftPanel" ? <SplitIcon /> :
+      undefined,
+    label:
+      activePanel === "split" ? "List View" :
+      activePanel === "leftPanel" ? "Map and List View" :
+      "",
+    onClick: () => setActivePanel((prev) => (prev === "split" ? "leftPanel" : "split")),
+  });
+}
 
-  const normalizedPos =
-    typeof position === "string"
-      ? window.google.maps.ControlPosition[position]
-      : position;
-
-  if (normalizedPos === undefined) {
-    console.error("Invalid control position:", position);
-    return;
-  }
-
-  // If already inserted somewhere else, remove first.
-  if (
-    insertedPosRef.current !== null &&
-    insertedPosRef.current !== normalizedPos
-  ) {
-    const oldPos = insertedPosRef.current;
-    const oldArray = map.controls[oldPos];
-    const oldIdx = oldArray.getArray().indexOf(el);
-    if (oldIdx >= 0) oldArray.removeAt(oldIdx);
-    insertedPosRef.current = null;
-  }
-
-  // Insert if not already inserted.
-  if (insertedPosRef.current === null) {
-    const arr = map.controls[normalizedPos];
-
-    if (typeof index === "number") {
-      const safeIndex = Math.max(0, Math.min(index, arr.getLength()));
-      arr.insertAt(safeIndex, el);
-    } else {
-      arr.push(el);
-    }
-
-    insertedPosRef.current = normalizedPos;
-  } else {
-    // Already inserted at same position. If index changes, reposition it.
-    if (typeof index === "number") {
-      const arr = map.controls[normalizedPos];
-      const currentIdx = arr.getArray().indexOf(el);
-      const desiredIdx = Math.max(0, Math.min(index, arr.getLength() - 1));
-
-      if (currentIdx !== -1 && currentIdx !== desiredIdx) {
-        arr.removeAt(currentIdx);
-        arr.insertAt(desiredIdx, el);
-      }
-    }
-  }
-
-  return () => {
-    const pos = insertedPosRef.current;
-    if (pos === null) return;
-
-    const arr = map.controls[pos];
-    const i = arr.getArray().indexOf(el);
-    if (i >= 0) arr.removeAt(i);
-    insertedPosRef.current = null;
-  };
-}, [map, disabled, position, index]);
+function renderPanelViewInMobile() {
+  return renderViewToggle({
+    wrapperClassName: styles.mobilePanel,
+    icon: activePanel === "split" || activePanel === "leftPanel" ? <MapIcon /> : <ListIcon />,
+    label: activePanel === "split" || activePanel === "leftPanel" ? "Map View" : "List View",
+    onClick: () =>
+      setActivePanel((prev) =>
+        prev === "split" || prev === "leftPanel" ? "rightPanel" : "leftPanel"
+      ),
+  });
+}

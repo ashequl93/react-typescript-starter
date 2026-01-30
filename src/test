@@ -1,52 +1,50 @@
-function renderViewToggle({
-  wrapperClassName,
-  icon,
-  label,
-  onClick,
-}: {
-  wrapperClassName: string;
-  icon?: React.ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <div className={wrapperClassName}>
-      <Button
-        className={styles.viewControlLabel}
-        icon={icon}
-        iconPosition="start"
-        priority="tertiary"
-        onClick={onClick}
-      >
-        {label}
-      </Button>
-    </div>
-  );
-}
+useEffect(() => {
+  const map = mapRef.current;
+  if (!map) return;
+  if (!window.google?.maps?.ControlPosition) return;
 
-function renderPanelViewInDesktop() {
-  return renderViewToggle({
-    wrapperClassName: styles.desktopPanel,
-    icon:
-      activePanel === "split" ? <ListIcon /> :
-      activePanel === "leftPanel" ? <SplitIcon /> :
-      undefined,
-    label:
-      activePanel === "split" ? "List View" :
-      activePanel === "leftPanel" ? "Map and List View" :
-      "",
-    onClick: () => setActivePanel((prev) => (prev === "split" ? "leftPanel" : "split")),
-  });
-}
+  const CP = window.google.maps.ControlPosition;
 
-function renderPanelViewInMobile() {
-  return renderViewToggle({
-    wrapperClassName: styles.mobilePanel,
-    icon: activePanel === "split" || activePanel === "leftPanel" ? <MapIcon /> : <ListIcon />,
-    label: activePanel === "split" || activePanel === "leftPanel" ? "Map View" : "List View",
-    onClick: () =>
-      setActivePanel((prev) =>
-        prev === "split" || prev === "leftPanel" ? "rightPanel" : "leftPanel"
-      ),
+  const toPos = (p?: ControlPositionName) => (p ? CP[p] : undefined);
+
+  map.setOptions({
+    // enable/disable
+    cameraControl: controls?.cameraControl?.enabled,
+    mapTypeControl: controls?.mapTypeControl?.enabled,
+    scaleControl: controls?.scaleControl?.enabled,
+    zoomControl: controls?.zoomControl?.enabled,
+    fullscreenControl: controls?.fullscreenControl?.enabled,
+
+    // ✅ options objects (not raw position)
+    cameraControlOptions: controls?.cameraControl?.position
+      ? { position: toPos(controls.cameraControl.position) }
+      : undefined,
+
+    mapTypeControlOptions: controls?.mapTypeControl?.position
+      ? { position: toPos(controls.mapTypeControl.position) }
+      : undefined,
+
+    scaleControlOptions: controls?.scaleControl?.position
+      ? { position: toPos(controls.scaleControl.position) }
+      : undefined,
+
+    zoomControlOptions: controls?.zoomControl?.position
+      ? { position: toPos(controls.zoomControl.position) }
+      : undefined,
+
+    fullscreenControlOptions: controls?.fullscreenControl?.position
+      ? { position: toPos(controls.fullscreenControl.position) }
+      : undefined,
   });
-}
+}, [
+  controls?.cameraControl?.enabled,
+  controls?.cameraControl?.position,
+  controls?.mapTypeControl?.enabled,
+  controls?.mapTypeControl?.position,
+  controls?.scaleControl?.enabled,
+  controls?.scaleControl?.position,
+  controls?.zoomControl?.enabled,
+  controls?.zoomControl?.position,
+  controls?.fullscreenControl?.enabled,
+  controls?.fullscreenControl?.position,
+]);

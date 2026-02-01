@@ -8,3 +8,20 @@ export const testLocations = [
   { name: "Hotel G", position: { lat: 40.7579, lng: -73.9857 } },
   { name: "Hotel H", position: { lat: 40.7584, lng: -73.9861 } },
 ];
+
+export const testLocations = [
+  // NYC
+  { name: "NY Hotel 1", position: { lat: 40.7580, lng: -73.9855 } },
+  { name: "NY Hotel 2", position: { lat: 40.7583, lng: -73.9851 } },
+  { name: "NY Hotel 3", position: { lat: 40.7578, lng: -73.9860 } },
+
+  // San Francisco
+  { name: "SF Hotel 1", position: { lat: 37.7749, lng: -122.4194 } },
+  { name: "SF Hotel 2", position: { lat: 37.7752, lng: -122.4189 } },
+  { name: "SF Hotel 3", position: { lat: 37.7746, lng: -122.4198 } },
+
+  // Los Angeles
+  { name: "LA Hotel 1", position: { lat: 34.0522, lng: -118.2437 } },
+  { name: "LA Hotel 2", position: { lat: 34.0525, lng: -118.2440 } },
+  { name: "LA Hotel 3", position: { lat: 34.0519, lng: -118.2434 } },
+];

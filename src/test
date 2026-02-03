@@ -1,27 +1,144 @@
-export const testLocations = [
-  { name: "Hotel A", position: { lat: 40.7580, lng: -73.9855 } }, // Times Square
-  { name: "Hotel B", position: { lat: 40.7583, lng: -73.9851 } },
-  { name: "Hotel C", position: { lat: 40.7578, lng: -73.9860 } },
-  { name: "Hotel D", position: { lat: 40.7585, lng: -73.9858 } },
-  { name: "Hotel E", position: { lat: 40.7576, lng: -73.9852 } },
-  { name: "Hotel F", position: { lat: 40.7581, lng: -73.9849 } },
-  { name: "Hotel G", position: { lat: 40.7579, lng: -73.9857 } },
-  { name: "Hotel H", position: { lat: 40.7584, lng: -73.9861 } },
-];
+import contentful from "contentful-management";
 
-export const testLocations = [
-  // NYC
-  { name: "NY Hotel 1", position: { lat: 40.7580, lng: -73.9855 } },
-  { name: "NY Hotel 2", position: { lat: 40.7583, lng: -73.9851 } },
-  { name: "NY Hotel 3", position: { lat: 40.7578, lng: -73.9860 } },
+/**
+ * Update slugs for TA-only pages by prefixing with "advisor/".
+ * - Only updates entries whose current slug is in SLUGS_TO_UPDATE.
+ * - Handles locales.
+ * - Dry run by default.
+ *
+ * ENV required:
+ *  - CONTENTFUL_MANAGEMENT_TOKEN
+ *  - CONTENTFUL_SPACE_ID
+ *  - CONTENTFUL_ENVIRONMENT_ID (ex: "master")
+ *
+ * Optional:
+ *  - CONTENTFUL_LOCALE (ex: "en-US") to target only one locale
+ *  - DRY_RUN ("true" | "false") default true
+ *  - PUBLISH ("true" | "false") default false
+ */
 
-  // San Francisco
-  { name: "SF Hotel 1", position: { lat: 37.7749, lng: -122.4194 } },
-  { name: "SF Hotel 2", position: { lat: 37.7752, lng: -122.4189 } },
-  { name: "SF Hotel 3", position: { lat: 37.7746, lng: -122.4198 } },
+const {
+  CONTENTFUL_MANAGEMENT_TOKEN,
+  CONTENTFUL_SPACE_ID,
+  CONTENTFUL_ENVIRONMENT_ID,
+  CONTENTFUL_LOCALE,
+  DRY_RUN = "true",
+  PUBLISH = "false",
+} = process.env;
 
-  // Los Angeles
-  { name: "LA Hotel 1", position: { lat: 34.0522, lng: -118.2437 } },
-  { name: "LA Hotel 2", position: { lat: 34.0525, lng: -118.2440 } },
-  { name: "LA Hotel 3", position: { lat: 34.0519, lng: -118.2434 } },
-];
+if (!CONTENTFUL_MANAGEMENT_TOKEN || !CONTENTFUL_SPACE_ID || !CONTENTFUL_ENVIRONMENT_ID) {
+  console.error("Missing env vars. Need CONTENTFUL_MANAGEMENT_TOKEN, CONTENTFUL_SPACE_ID, CONTENTFUL_ENVIRONMENT_ID");
+  process.exit(1);
+}
+
+const isDryRun = DRY_RUN !== "false";
+const shouldPublish = PUBLISH === "true";
+
+// ✅ Customize these
+const CONTENT_TYPE_ID = "page";      // <-- your content type id in Contentful
+const SLUG_FIELD_ID = "slug";        // <-- your slug field id
+
+// ✅ Only update these slugs (safest). Replace with your real list.
+const SLUGS_TO_UPDATE = new Set([
+  "ta-login",
+  "ta-registration",
+  "ta-forgot-password",
+  "lan-bookings",
+  "ta-profile",
+  "about-lan",
+]);
+
+function toAdvisorSlug(oldSlug) {
+  // If already prefixed, leave it.
+  if (oldSlug.startsWith("advisor/")) return oldSlug;
+  return `advisor/${oldSlug}`;
+}
+
+async function main() {
+  const client = contentful.createClient({ accessToken: CONTENTFUL_MANAGEMENT_TOKEN });
+  const space = await client.getSpace(CONTENTFUL_SPACE_ID);
+  const env = await space.getEnvironment(CONTENTFUL_ENVIRONMENT_ID);
+
+  // Get locale list so we can update all locales safely
+  const localesResp = await env.getLocales();
+  const locales = localesResp.items.map((l) => l.code);
+
+  const targetLocales = CONTENTFUL_LOCALE ? [CONTENTFUL_LOCALE] : locales;
+
+  console.log("Environment:", CONTENTFUL_ENVIRONMENT_ID);
+  console.log("Locales:", targetLocales.join(", "));
+  console.log("Dry run:", isDryRun);
+  console.log("Publish:", shouldPublish);
+
+  // Pull entries in pages of 100
+  let skip = 0;
+  const limit = 100;
+  let updatedCount = 0;
+  let examinedCount = 0;
+
+  while (true) {
+    const entries = await env.getEntries({
+      content_type: CONTENT_TYPE_ID,
+      limit,
+      skip,
+    });
+
+    if (!entries.items.length) break;
+
+    for (const entry of entries.items) {
+      examinedCount++;
+
+      const fields = entry.fields || {};
+      const slugField = fields[SLUG_FIELD_ID];
+      if (!slugField) continue;
+
+      // Determine if any locale matches our target slugs
+      let willUpdate = false;
+      const changes = [];
+
+      for (const locale of targetLocales) {
+        const currentSlug = slugField[locale];
+        if (!currentSlug) continue;
+
+        if (SLUGS_TO_UPDATE.has(currentSlug)) {
+          const newSlug = toAdvisorSlug(currentSlug);
+          if (newSlug !== currentSlug) {
+            willUpdate = true;
+            changes.push({ locale, currentSlug, newSlug });
+          }
+        }
+      }
+
+      if (!willUpdate) continue;
+
+      console.log("\nEntry:", entry.sys.id);
+      console.log("Changes:", changes);
+
+      if (isDryRun) continue;
+
+      // Apply updates
+      for (const { locale, newSlug } of changes) {
+        entry.fields[SLUG_FIELD_ID][locale] = newSlug;
+      }
+
+      const updated = await entry.update();
+      updatedCount++;
+
+      if (shouldPublish) {
+        await updated.publish();
+      }
+    }
+
+    skip += entries.items.length;
+    if (skip >= entries.total) break;
+  }
+
+  console.log("\nDone.");
+  console.log("Examined:", examinedCount);
+  console.log("Updated:", isDryRun ? "(dry run, not applied)" : updatedCount);
+}
+
+main().catch((e) => {
+  console.error("Error:", e);
+  process.exit(1);
+});

@@ -1,144 +1,35 @@
-import contentful from "contentful-management";
+Summary
 
-/**
- * Update slugs for TA-only pages by prefixing with "advisor/".
- * - Only updates entries whose current slug is in SLUGS_TO_UPDATE.
- * - Handles locales.
- * - Dry run by default.
- *
- * ENV required:
- *  - CONTENTFUL_MANAGEMENT_TOKEN
- *  - CONTENTFUL_SPACE_ID
- *  - CONTENTFUL_ENVIRONMENT_ID (ex: "master")
- *
- * Optional:
- *  - CONTENTFUL_LOCALE (ex: "en-US") to target only one locale
- *  - DRY_RUN ("true" | "false") default true
- *  - PUBLISH ("true" | "false") default false
- */
+This PR refactors the authorizeRequest logic to clearly separate legacy auth routes, role-based routes (advisor / traveler), and protected content, and fixes an issue that caused infinite redirect loops (ERR_TOO_MANY_REDIRECTS) when unauthenticated users accessed certain pages.
 
-const {
-  CONTENTFUL_MANAGEMENT_TOKEN,
-  CONTENTFUL_SPACE_ID,
-  CONTENTFUL_ENVIRONMENT_ID,
-  CONTENTFUL_LOCALE,
-  DRY_RUN = "true",
-  PUBLISH = "false",
-} = process.env;
+Problem
 
-if (!CONTENTFUL_MANAGEMENT_TOKEN || !CONTENTFUL_SPACE_ID || !CONTENTFUL_ENVIRONMENT_ID) {
-  console.error("Missing env vars. Need CONTENTFUL_MANAGEMENT_TOKEN, CONTENTFUL_SPACE_ID, CONTENTFUL_ENVIRONMENT_ID");
-  process.exit(1);
-}
+Legacy routes like /login, /register, and /forgot-password were treated as normal unprotected pages.
 
-const isDryRun = DRY_RUN !== "false";
-const shouldPublish = PUBLISH === "true";
+This caused unauthenticated requests to be redirected repeatedly between legacy routes and role-specific login routes (e.g. /login → /advisor/login → /login).
 
-// ✅ Customize these
-const CONTENT_TYPE_ID = "page";      // <-- your content type id in Contentful
-const SLUG_FIELD_ID = "slug";        // <-- your slug field id
+In some cases, authorization was also being applied to paths that don’t exist (e.g. /dashboard), resulting in unexpected behavior or 404s.
 
-// ✅ Only update these slugs (safest). Replace with your real list.
-const SLUGS_TO_UPDATE = new Set([
-  "ta-login",
-  "ta-registration",
-  "ta-forgot-password",
-  "lan-bookings",
-  "ta-profile",
-  "about-lan",
-]);
+Solution
 
-function toAdvisorSlug(oldSlug) {
-  // If already prefixed, leave it.
-  if (oldSlug.startsWith("advisor/")) return oldSlug;
-  return `advisor/${oldSlug}`;
-}
+Explicitly classified legacy auth routes as entry points that always redirect to the appropriate role-specific routes (defaulting to Travel Advisor for now).
 
-async function main() {
-  const client = contentful.createClient({ accessToken: CONTENTFUL_MANAGEMENT_TOKEN });
-  const space = await client.getSpace(CONTENTFUL_SPACE_ID);
-  const env = await space.getEnvironment(CONTENTFUL_ENVIRONMENT_ID);
+Ensured role auth routes (/advisor/login, /advisor/register, etc.) are truly unprotected for unauthenticated users to prevent redirect loops.
 
-  // Get locale list so we can update all locales safely
-  const localesResp = await env.getLocales();
-  const locales = localesResp.items.map((l) => l.code);
+Simplified authorization flow by:
 
-  const targetLocales = CONTENTFUL_LOCALE ? [CONTENTFUL_LOCALE] : locales;
+Handling legacy routes first
 
-  console.log("Environment:", CONTENTFUL_ENVIRONMENT_ID);
-  console.log("Locales:", targetLocales.join(", "));
-  console.log("Dry run:", isDryRun);
-  console.log("Publish:", shouldPublish);
+Then unauthenticated access
 
-  // Pull entries in pages of 100
-  let skip = 0;
-  const limit = 100;
-  let updatedCount = 0;
-  let examinedCount = 0;
+Then role-based protection (advisor vs traveler)
 
-  while (true) {
-    const entries = await env.getEntries({
-      content_type: CONTENT_TYPE_ID,
-      limit,
-      skip,
-    });
+Added/updated tests to reflect the new behavior and prevent regressions.
 
-    if (!entries.items.length) break;
+Result
 
-    for (const entry of entries.items) {
-      examinedCount++;
+Eliminates infinite redirect loops
 
-      const fields = entry.fields || {};
-      const slugField = fields[SLUG_FIELD_ID];
-      if (!slugField) continue;
+Makes authorization behavior predictable and easier to reason about
 
-      // Determine if any locale matches our target slugs
-      let willUpdate = false;
-      const changes = [];
-
-      for (const locale of targetLocales) {
-        const currentSlug = slugField[locale];
-        if (!currentSlug) continue;
-
-        if (SLUGS_TO_UPDATE.has(currentSlug)) {
-          const newSlug = toAdvisorSlug(currentSlug);
-          if (newSlug !== currentSlug) {
-            willUpdate = true;
-            changes.push({ locale, currentSlug, newSlug });
-          }
-        }
-      }
-
-      if (!willUpdate) continue;
-
-      console.log("\nEntry:", entry.sys.id);
-      console.log("Changes:", changes);
-
-      if (isDryRun) continue;
-
-      // Apply updates
-      for (const { locale, newSlug } of changes) {
-        entry.fields[SLUG_FIELD_ID][locale] = newSlug;
-      }
-
-      const updated = await entry.update();
-      updatedCount++;
-
-      if (shouldPublish) {
-        await updated.publish();
-      }
-    }
-
-    skip += entries.items.length;
-    if (skip >= entries.total) break;
-  }
-
-  console.log("\nDone.");
-  console.log("Examined:", examinedCount);
-  console.log("Updated:", isDryRun ? "(dry run, not applied)" : updatedCount);
-}
-
-main().catch((e) => {
-  console.error("Error:", e);
-  process.exit(1);
-});
+Prepares the codebase for future removal of legacy auth routes and proper Auth0 role enforcement

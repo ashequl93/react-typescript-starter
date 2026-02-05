@@ -1,35 +1,256 @@
-Summary
+Perfect 👍
+Below is a **much simpler, final Confluence-ready version**, trimmed to **only what matters**, updated with:
 
-This PR refactors the authorizeRequest logic to clearly separate legacy auth routes, role-based routes (advisor / traveler), and protected content, and fixes an issue that caused infinite redirect loops (ERR_TOO_MANY_REDIRECTS) when unauthenticated users accessed certain pages.
+* ✅ **TIO** terminology
+* ✅ **AWS self-hosted runner only**
+* ✅ **Node 20.12.1**
+* ✅ **Allure reports**
+* ✅ No heavy/advanced scenarios
 
-Problem
+I’ve clearly marked **where the document starts and ends**.
 
-Legacy routes like /login, /register, and /forgot-password were treated as normal unprotected pages.
+---
 
-This caused unauthenticated requests to be redirected repeatedly between legacy routes and role-specific login routes (e.g. /login → /advisor/login → /login).
+---
 
-In some cases, authorization was also being applied to paths that don’t exist (e.g. /dashboard), resulting in unexpected behavior or 404s.
+# 📄 CONFLUENCE DOCUMENT STARTS HERE
 
-Solution
+---
 
-Explicitly classified legacy auth routes as entry points that always redirect to the appropriate role-specific routes (defaulting to Travel Advisor for now).
+# Playwright Automation – CI/CD Setup (GitHub Actions + AWS)
 
-Ensured role auth routes (/advisor/login, /advisor/register, etc.) are truly unprotected for unauthenticated users to prevent redirect loops.
+## 1. Purpose
 
-Simplified authorization flow by:
+This document explains **exactly what the TIO team needs to set up** so our existing **Playwright automation framework** can run in a **CI/CD pipeline** using **GitHub Actions** and **AWS**.
 
-Handling legacy routes first
+Currently, tests run locally. After this setup:
 
-Then unauthenticated access
+* Tests can be triggered from GitHub
+* Everyone runs tests the same way
+* Reports are generated automatically (Allure)
 
-Then role-based protection (advisor vs traveler)
+---
 
-Added/updated tests to reflect the new behavior and prevent regressions.
+## 2. High-Level Overview
 
-Result
+**How it works**
 
-Eliminates infinite redirect loops
+1. GitHub Actions workflow is triggered (manual / PR / push)
+2. Job runs on a **self-hosted GitHub runner**
+3. Runner is hosted on **AWS EC2**
+4. Playwright tests execute
+5. **Allure report** is generated and uploaded
 
-Makes authorization behavior predictable and easier to reason about
+**Important**
 
-Prepares the codebase for future removal of legacy auth routes and proper Auth0 role enforcement
+* We are **not using GitHub-hosted runners**
+* We are **using AWS EC2**
+
+---
+
+## 3. AWS Setup (What TIO Needs to Create)
+
+### 3.1 EC2 Instance
+
+**Recommended**
+
+* OS: Ubuntu 22.04
+* Instance type: `t3.small` or `t3.medium`
+* Disk: 30 GB
+* Network: Access to application under test
+* No inbound ports required (preferred)
+
+---
+
+## 4. Software Installation on EC2
+
+### 4.1 System Packages
+
+```bash
+sudo apt update
+sudo apt install -y curl unzip git
+```
+
+### 4.2 Node.js (Required Version)
+
+**Node version: `20.12.1`**
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+```
+
+Verify:
+
+```bash
+node -v   # should be 20.12.1
+npm -v
+```
+
+---
+
+## 5. GitHub Self-Hosted Runner Setup
+
+### 5.1 Register Runner
+
+1. GitHub Repo → Settings → Actions → Runners
+2. Add **New self-hosted runner**
+3. Choose **Linux**
+4. Follow GitHub instructions on the EC2 instance
+
+### 5.2 Required Runner Labels
+
+Add these labels:
+
+* `self-hosted`
+* `linux`
+* `playwright`
+* `aws`
+
+### 5.3 Run Runner as a Service
+
+```bash
+sudo ./svc.sh install
+sudo ./svc.sh start
+```
+
+---
+
+## 6. Commands Used by CI (Important for TIO)
+
+The CI pipeline runs **only these commands**:
+
+```bash
+npm ci
+npx playwright install --with-deps
+npx playwright test
+```
+
+No extra setup is required.
+
+---
+
+## 7. Secrets & Environment Variables
+
+TIO must configure **GitHub Secrets**:
+
+Examples:
+
+* `BASE_URL`
+* `USERNAME`
+* `PASSWORD`
+* Any required API tokens
+
+Secrets must be added in:
+
+* GitHub → Repository Settings → Secrets
+  (or GitHub Environments if used)
+
+---
+
+## 8. GitHub Actions Workflow (Final & Simple)
+
+Create file:
+
+```
+.github/workflows/playwright.yml
+```
+
+```yaml
+name: Playwright Tests
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [ main ]
+
+jobs:
+  playwright:
+    runs-on: [self-hosted, linux, playwright, aws]
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.12.1
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      - name: Run Playwright tests
+        run: npx playwright test
+
+      - name: Generate Allure report
+        if: always()
+        run: |
+          npx allure generate allure-results --clean -o allure-report
+
+      - name: Upload Allure report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-report
+          path: allure-report/
+          retention-days: 14
+```
+
+---
+
+## 9. Test Reports
+
+After each run:
+
+* **Allure report** is available as a GitHub Actions artifact
+* Can be downloaded and opened locally (`index.html`)
+
+---
+
+## 10. Responsibilities
+
+### Engineering
+
+* Maintain Playwright tests
+* Maintain Allure configuration
+* Ensure tests run headless
+
+### TIO
+
+* Provision AWS EC2
+* Install Node and system dependencies
+* Configure GitHub self-hosted runner
+* Maintain runner health
+* Configure secrets
+
+---
+
+## 11. Summary (For Quick Reading)
+
+* AWS EC2 is required
+* GitHub Actions uses self-hosted runner
+* Node version: **20.12.1**
+* Playwright installs its own browsers
+* Allure reports are generated automatically
+* TIO owns infrastructure, Engineering owns tests
+
+---
+
+# 📄 CONFLUENCE DOCUMENT ENDS HERE
+
+---
+
+If you want, I can:
+
+* Make this **even shorter (½ page)**
+* Add a **simple architecture diagram**
+* Rewrite it in **TIO checklist format**
+* Align wording exactly with your internal Confluence style
+
+Just tell me 👍

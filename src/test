@@ -1,6 +1,34 @@
-console.log("[OverlayView] map checks", {
-  hasPanBy: typeof (map as any)?.panBy === "function",
-  hasGetDiv: typeof (map as any)?.getDiv === "function",
-  hasAddListener: typeof (map as any)?.addListener === "function",
-  protoHasAddListener: !!Object.getPrototypeOf(map as any)?.addListener,
-});
+private getKey(pos: google.maps.LatLngLiteral) {
+  return `${pos.lat.toFixed(6)}:${pos.lng.toFixed(6)}`;
+}
+
+draw() {
+  const projection = this.getProjection();
+  const point = projection?.fromLatLngToDivPixel(new google.maps.LatLng(this.position));
+  if (!point) return;
+
+  this.container.style.left = `${point.x}px`;
+  this.container.style.top = `${point.y}px`;
+
+  // ✅ MOBILE anchor pan: run once per position
+  if (this.isMobile && this.map) {
+    const key = this.getKey(this.position);
+    if (this.didAnchorPanForKey !== key) {
+      this.didAnchorPanForKey = key;
+
+      const mapDiv = this.map.getDiv() as HTMLElement;
+      const rect = mapDiv.getBoundingClientRect();
+
+      const targetX = rect.width * 0.5;
+      const targetY = rect.height * 0.72; // lower part
+
+      const dx = point.x - targetX;
+      const dy = point.y - targetY;
+
+      // Small threshold to avoid micro-jitter / infinite loops
+      if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
+        this.map.panBy(dx, dy);
+      }
+    }
+  }
+}

@@ -1,24 +1,6 @@
-if (isMobile && map) {
-  const listener = map.addListener("idle", () => {
-    google.maps.event.removeListener(listener);
-
-    const projection = overlay.getProjection();
-    if (!projection) return;
-
-    const pt = projection.fromLatLngToDivPixel(
-      new google.maps.LatLng(position)
-    );
-    if (!pt) return;
-
-    const mapDiv = map.getDiv() as HTMLElement;
-    const rect = mapDiv.getBoundingClientRect();
-
-    const targetX = rect.width * 0.5;
-    const targetY = rect.height * 0.72;
-
-    const dx = pt.x - targetX;
-    const dy = pt.y - targetY;
-
-    map.panBy(dx, dy);
-  });
-}
+console.log("[OverlayView] map checks", {
+  hasPanBy: typeof (map as any)?.panBy === "function",
+  hasGetDiv: typeof (map as any)?.getDiv === "function",
+  hasAddListener: typeof (map as any)?.addListener === "function",
+  protoHasAddListener: !!Object.getPrototypeOf(map as any)?.addListener,
+});

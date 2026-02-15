@@ -4,8 +4,13 @@ class ReactOverlayView extends google.maps.OverlayView {
   map: google.maps.Map;
 
   private didPanForKey: string | null = null;
+  private isPanning = false;
 
-  constructor(position: google.maps.LatLngLiteral, container: HTMLDivElement, map: google.maps.Map) {
+  constructor(
+    position: google.maps.LatLngLiteral,
+    container: HTMLDivElement,
+    map: google.maps.Map
+  ) {
     super();
     this.position = position;
     this.container = container;
@@ -17,6 +22,16 @@ class ReactOverlayView extends google.maps.OverlayView {
     return `${pos.lat.toFixed(6)}:${pos.lng.toFixed(6)}`;
   }
 
+  /** Call this when the user clicks a different marker */
+  setPosition(position: google.maps.LatLngLiteral) {
+    const newKey = this.keyForPos(position);
+    if (newKey !== this.keyForPos(this.position)) {
+      this.didPanForKey = null; // new marker, allow pan again
+    }
+    this.position = position;
+    this.draw();
+  }
+
   onAdd() {
     this.getPanes()?.floatPane?.appendChild(this.container);
   }
@@ -25,31 +40,36 @@ class ReactOverlayView extends google.maps.OverlayView {
     const projection = this.getProjection();
     if (!projection) return;
 
-    const point = projection.fromLatLngToDivPixel(new google.maps.LatLng(this.position));
+    const point = projection.fromLatLngToDivPixel(
+      new google.maps.LatLng(this.position)
+    );
     if (!point) return;
 
-    // position the overlay container at the marker pixel
+    // Position the overlay container at the marker pixel
     this.container.style.left = `${point.x}px`;
     this.container.style.top = `${point.y}px`;
 
-    // Run collision check AFTER layout paints (important)
-    // Also guard so we pan at most once per marker click.
+    // Guard: already panned for this marker, or pan in progress
     const key = this.keyForPos(this.position);
     if (this.didPanForKey === key) return;
+    if (this.isPanning) return;
 
+    // Run collision check AFTER layout paints
     requestAnimationFrame(() => {
       this.runCollisionCheckAndPan(point);
     });
   }
 
   private runCollisionCheckAndPan(markerPoint: google.maps.Point) {
+    if (this.isPanning) return;
+
     const mapDiv = this.map.getDiv() as HTMLElement;
     const mapRect = mapDiv.getBoundingClientRect();
     const overlayRect = this.container.getBoundingClientRect();
 
     // Tune these for your UI
     const padding = 12;
-    const topInset = 120; // height of the search form/header area overlapping the map on mobile
+    const topInset = 120; // height of header/search form overlapping the map
 
     const safeTop = mapRect.top + topInset + padding;
     const safeLeft = mapRect.left + padding;
@@ -64,23 +84,29 @@ class ReactOverlayView extends google.maps.OverlayView {
     const hasCollision = outsideTop || outsideLeft || outsideRight || outsideBottom;
     if (!hasCollision) return;
 
-    // Mark as handled for this position so it doesn't loop
+    // Mark as handled so draw() doesn't loop
     this.didPanForKey = this.keyForPos(this.position);
+    this.isPanning = true;
 
-    // Pan marker to lower-middle anchor
-    const mapWidth = mapRect.width;
-    const mapHeight = mapRect.height;
-
-    const targetX = mapWidth * 0.5;
-    const targetY = mapHeight * 0.72;
+    // Pan marker to lower-middle of the map
+    const targetX = mapRect.width * 0.5;
+    const targetY = mapRect.height * 0.72;
 
     const dx = markerPoint.x - targetX;
     const dy = markerPoint.y - targetY;
 
     // Avoid tiny jitter pans
-    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) {
+      this.isPanning = false;
+      return;
+    }
 
     this.map.panBy(dx, dy);
+
+    // Wait for pan animation to finish before allowing new pans
+    google.maps.event.addListenerOnce(this.map, "idle", () => {
+      this.isPanning = false;
+    });
   }
 
   onRemove() {

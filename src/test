@@ -1,34 +1,89 @@
-private getKey(pos: google.maps.LatLngLiteral) {
-  return `${pos.lat.toFixed(6)}:${pos.lng.toFixed(6)}`;
-}
+class ReactOverlayView extends google.maps.OverlayView {
+  position: google.maps.LatLngLiteral;
+  container: HTMLDivElement;
+  map: google.maps.Map;
 
-draw() {
-  const projection = this.getProjection();
-  const point = projection?.fromLatLngToDivPixel(new google.maps.LatLng(this.position));
-  if (!point) return;
+  private didPanForKey: string | null = null;
 
-  this.container.style.left = `${point.x}px`;
-  this.container.style.top = `${point.y}px`;
+  constructor(position: google.maps.LatLngLiteral, container: HTMLDivElement, map: google.maps.Map) {
+    super();
+    this.position = position;
+    this.container = container;
+    this.map = map;
+    this.container.style.position = "absolute";
+  }
 
-  // ✅ MOBILE anchor pan: run once per position
-  if (this.isMobile && this.map) {
-    const key = this.getKey(this.position);
-    if (this.didAnchorPanForKey !== key) {
-      this.didAnchorPanForKey = key;
+  private keyForPos(pos: google.maps.LatLngLiteral) {
+    return `${pos.lat.toFixed(6)}:${pos.lng.toFixed(6)}`;
+  }
 
-      const mapDiv = this.map.getDiv() as HTMLElement;
-      const rect = mapDiv.getBoundingClientRect();
+  onAdd() {
+    this.getPanes()?.floatPane?.appendChild(this.container);
+  }
 
-      const targetX = rect.width * 0.5;
-      const targetY = rect.height * 0.72; // lower part
+  draw() {
+    const projection = this.getProjection();
+    if (!projection) return;
 
-      const dx = point.x - targetX;
-      const dy = point.y - targetY;
+    const point = projection.fromLatLngToDivPixel(new google.maps.LatLng(this.position));
+    if (!point) return;
 
-      // Small threshold to avoid micro-jitter / infinite loops
-      if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
-        this.map.panBy(dx, dy);
-      }
-    }
+    // position the overlay container at the marker pixel
+    this.container.style.left = `${point.x}px`;
+    this.container.style.top = `${point.y}px`;
+
+    // Run collision check AFTER layout paints (important)
+    // Also guard so we pan at most once per marker click.
+    const key = this.keyForPos(this.position);
+    if (this.didPanForKey === key) return;
+
+    requestAnimationFrame(() => {
+      this.runCollisionCheckAndPan(point);
+    });
+  }
+
+  private runCollisionCheckAndPan(markerPoint: google.maps.Point) {
+    const mapDiv = this.map.getDiv() as HTMLElement;
+    const mapRect = mapDiv.getBoundingClientRect();
+    const overlayRect = this.container.getBoundingClientRect();
+
+    // Tune these for your UI
+    const padding = 12;
+    const topInset = 120; // height of the search form/header area overlapping the map on mobile
+
+    const safeTop = mapRect.top + topInset + padding;
+    const safeLeft = mapRect.left + padding;
+    const safeRight = mapRect.right - padding;
+    const safeBottom = mapRect.bottom - padding;
+
+    const outsideTop = overlayRect.top < safeTop;
+    const outsideLeft = overlayRect.left < safeLeft;
+    const outsideRight = overlayRect.right > safeRight;
+    const outsideBottom = overlayRect.bottom > safeBottom;
+
+    const hasCollision = outsideTop || outsideLeft || outsideRight || outsideBottom;
+    if (!hasCollision) return;
+
+    // Mark as handled for this position so it doesn't loop
+    this.didPanForKey = this.keyForPos(this.position);
+
+    // Pan marker to lower-middle anchor
+    const mapWidth = mapRect.width;
+    const mapHeight = mapRect.height;
+
+    const targetX = mapWidth * 0.5;
+    const targetY = mapHeight * 0.72;
+
+    const dx = markerPoint.x - targetX;
+    const dy = markerPoint.y - targetY;
+
+    // Avoid tiny jitter pans
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+
+    this.map.panBy(dx, dy);
+  }
+
+  onRemove() {
+    this.container.parentNode?.removeChild(this.container);
   }
 }

@@ -1,25 +1,24 @@
-// ✅ MOBILE: anchor marker to lower part of viewport
-if (isMobile) {
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      const projection = overlay.getProjection();
-      if (!projection || !map) return;
+if (isMobile && map) {
+  const listener = map.addListener("idle", () => {
+    google.maps.event.removeListener(listener);
 
-      const pt = projection.fromLatLngToDivPixel(
-        new google.maps.LatLng(position)
-      );
-      if (!pt) return;
+    const projection = overlay.getProjection();
+    if (!projection) return;
 
-      const mapDiv = map.getDiv() as HTMLElement;
-      const rect = mapDiv.getBoundingClientRect();
+    const pt = projection.fromLatLngToDivPixel(
+      new google.maps.LatLng(position)
+    );
+    if (!pt) return;
 
-      const targetX = rect.width * 0.5;
-      const targetY = rect.height * 0.72; // tweak 0.70–0.78
+    const mapDiv = map.getDiv() as HTMLElement;
+    const rect = mapDiv.getBoundingClientRect();
 
-      const dx = pt.x - targetX;
-      const dy = pt.y - targetY;
+    const targetX = rect.width * 0.5;
+    const targetY = rect.height * 0.72;
 
-      map.panBy(dx, dy);
-    });
+    const dx = pt.x - targetX;
+    const dy = pt.y - targetY;
+
+    map.panBy(dx, dy);
   });
 }

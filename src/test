@@ -1,115 +1,84 @@
-class ReactOverlayView extends google.maps.OverlayView {
-  position: google.maps.LatLngLiteral;
-  container: HTMLDivElement;
-  map: google.maps.Map;
+private runCollisionCheckAndPan(markerPoint: google.maps.Point) {
+  if (this.isPanning) return;
 
-  private didPanForKey: string | null = null;
-  private isPanning = false;
+  const mapDiv = this.map.getDiv() as HTMLElement;
+  const mapRect = mapDiv.getBoundingClientRect();
+  const overlayRect = this.container.getBoundingClientRect();
 
-  constructor(
-    position: google.maps.LatLngLiteral,
-    container: HTMLDivElement,
-    map: google.maps.Map
-  ) {
-    super();
-    this.position = position;
-    this.container = container;
-    this.map = map;
-    this.container.style.position = "absolute";
+  const padding = 12;
+  const topInset = 120;
+
+  const safeTop = mapRect.top + topInset + padding;
+  const safeLeft = mapRect.left + padding;
+  const safeRight = mapRect.right - padding;
+  const safeBottom = mapRect.bottom - padding;
+
+  const outsideTop = overlayRect.top < safeTop;
+  const outsideLeft = overlayRect.left < safeLeft;
+  const outsideRight = overlayRect.right > safeRight;
+  const outsideBottom = overlayRect.bottom > safeBottom;
+
+  const hasCollision = outsideTop || outsideLeft || outsideRight || outsideBottom;
+  if (!hasCollision) return;
+
+  this.didPanForKey = this.keyForPos(this.position);
+  this.isPanning = true;
+
+  // ✅ KEY FIX: Account for overlay size when choosing the target
+  // The overlay extends DOWN and RIGHT from the marker,
+  // so the marker needs to be HIGH and LEFT enough for the card to fit
+
+  const overlayWidth = overlayRect.width;
+  const overlayHeight = overlayRect.height;
+
+  // Target: position the marker so the ENTIRE card fits inside the map
+  // Marker goes to upper-left area, leaving room for the card below/right
+  const targetX = (mapRect.width - overlayWidth) / 2;   // center the CARD, not the marker
+  const targetY = topInset + padding + 20;               // just below the safe top
+
+  const dx = markerPoint.x - targetX;
+  const dy = markerPoint.y - targetY;
+
+  if (Math.abs(dx) < 8 && Math.abs(dy) < 8) {
+    this.isPanning = false;
+    return;
   }
 
-  private keyForPos(pos: google.maps.LatLngLiteral) {
-    return `${pos.lat.toFixed(6)}:${pos.lng.toFixed(6)}`;
-  }
+  this.map.panBy(dx, dy);
 
-  /** Call this when the user clicks a different marker */
-  setPosition(position: google.maps.LatLngLiteral) {
-    const newKey = this.keyForPos(position);
-    if (newKey !== this.keyForPos(this.position)) {
-      this.didPanForKey = null; // new marker, allow pan again
-    }
-    this.position = position;
-    this.draw();
-  }
-
-  onAdd() {
-    this.getPanes()?.floatPane?.appendChild(this.container);
-  }
-
-  draw() {
-    const projection = this.getProjection();
-    if (!projection) return;
-
-    const point = projection.fromLatLngToDivPixel(
-      new google.maps.LatLng(this.position)
-    );
-    if (!point) return;
-
-    // Position the overlay container at the marker pixel
-    this.container.style.left = `${point.x}px`;
-    this.container.style.top = `${point.y}px`;
-
-    // Guard: already panned for this marker, or pan in progress
-    const key = this.keyForPos(this.position);
-    if (this.didPanForKey === key) return;
-    if (this.isPanning) return;
-
-    // Run collision check AFTER layout paints
-    requestAnimationFrame(() => {
-      this.runCollisionCheckAndPan(point);
-    });
-  }
-
-  private runCollisionCheckAndPan(markerPoint: google.maps.Point) {
-    if (this.isPanning) return;
-
-    const mapDiv = this.map.getDiv() as HTMLElement;
-    const mapRect = mapDiv.getBoundingClientRect();
-    const overlayRect = this.container.getBoundingClientRect();
-
-    // Tune these for your UI
-    const padding = 12;
-    const topInset = 120; // height of header/search form overlapping the map
-
-    const safeTop = mapRect.top + topInset + padding;
-    const safeLeft = mapRect.left + padding;
-    const safeRight = mapRect.right - padding;
-    const safeBottom = mapRect.bottom - padding;
-
-    const outsideTop = overlayRect.top < safeTop;
-    const outsideLeft = overlayRect.left < safeLeft;
-    const outsideRight = overlayRect.right > safeRight;
-    const outsideBottom = overlayRect.bottom > safeBottom;
-
-    const hasCollision = outsideTop || outsideLeft || outsideRight || outsideBottom;
-    if (!hasCollision) return;
-
-    // Mark as handled so draw() doesn't loop
-    this.didPanForKey = this.keyForPos(this.position);
-    this.isPanning = true;
-
-    // Pan marker to lower-middle of the map
-    const targetX = mapRect.width * 0.5;
-    const targetY = mapRect.height * 0.72;
-
-    const dx = markerPoint.x - targetX;
-    const dy = markerPoint.y - targetY;
-
-    // Avoid tiny jitter pans
-    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) {
-      this.isPanning = false;
-      return;
-    }
-
-    this.map.panBy(dx, dy);
-
-    // Wait for pan animation to finish before allowing new pans
-    google.maps.event.addListenerOnce(this.map, "idle", () => {
-      this.isPanning = false;
-    });
-  }
-
-  onRemove() {
-    this.container.parentNode?.removeChild(this.container);
-  }
+  google.maps.event.addListenerOnce(this.map, "idle", () => {
+    this.isPanning = false;
+  });
 }
+```
+
+## What Changed and Why
+```
+BEFORE:
+  Target = lower-middle (50%, 72%)
+  Problem = card extends below marker, falls off screen
+
+  Map visible area:
+  ┌─────────────────────┐
+  │                     │
+  │                     │
+  │                     │
+  │          📌 ← marker lands here (72% down)
+  │           ┌──Card──┐│
+  │           │        ││
+  └───────────┴────────┘│  ← card overflows!
+                        │
+
+AFTER:
+  Target = upper area, offset by card size
+  Result = card has room to expand
+
+  Map visible area:
+  ┌─────────────────────┐
+  │  header/search      │
+  │     📌 ← marker lands here (below header)
+  │      ┌──Card──┐     │
+  │      │        │     │
+  │      └────────┘     │  ← fits! ✅
+  │                     │
+  └─────────────────────┘

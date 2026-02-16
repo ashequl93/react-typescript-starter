@@ -1,198 +1,61 @@
-import { useContext, useEffect, useRef, type PropsWithChildren } from 'react';
-import { createPortal } from 'react-dom';
+private runCollisionCheckAndPan() {
+  if (this.isPanning) return;
 
-import { GoogleMapContext } from './googleMapContext';
+  const mapDiv = this.map.getDiv() as HTMLElement;
+  const mapRect = mapDiv.getBoundingClientRect();
 
-export interface OverlayViewProps extends PropsWithChildren {
-  position?: google.maps.LatLng | google.maps.LatLngLiteral | null;
-  onOverlayClose?: () => void;
-}
+  // Get the VISIBLE card, not just the anchor container
+  const cardElement = this.container.firstElementChild as HTMLElement;
+  if (!cardElement) return;
+  const cardRect = cardElement.getBoundingClientRect();
 
-export function OverlayView({
-  position,
-  children,
-  onOverlayClose
-}: OverlayViewProps) {
-  const overlayRef = useRef<google.maps.OverlayView | null>(null);
-  const containerRef = useRef(document.createElement('div'));
+  const padding = 12;
+  const topInset = 120;
 
-  const { map } = useContext(GoogleMapContext);
+  const safeTop = mapRect.top + topInset + padding;
+  const safeLeft = mapRect.left + padding;
+  const safeRight = mapRect.right - padding;
+  const safeBottom = mapRect.bottom - padding;
 
-  useEffect(
-    function createOverlayView() {
-      if (!map || !position) return;
+  const outsideTop = cardRect.top < safeTop;
+  const outsideLeft = cardRect.left < safeLeft;
+  const outsideRight = cardRect.right > safeRight;
+  const outsideBottom = cardRect.bottom > safeBottom;
 
-      class ReactOverlayView extends google.maps.OverlayView {
-        position: google.maps.LatLngLiteral;
-        container: HTMLDivElement;
-        map: google.maps.Map;
+  const hasCollision =
+    outsideTop || outsideLeft || outsideRight || outsideBottom;
+  if (!hasCollision) return;
 
-        private didPanForKey: string | null = null;
-        private isPanning = false;
+  this.didPanForKey = this.keyForPos(this.position);
+  this.isPanning = true;
 
-        constructor(
-          position: google.maps.LatLngLiteral,
-          container: HTMLDivElement,
-          map: google.maps.Map
-        ) {
-          super();
-          this.position = position;
-          this.container = container;
-          this.map = map;
-          this.container.style.position = 'absolute';
-        }
+  // Step 1: Center the marker
+  this.map.panTo(this.position);
 
-        private keyForPos(pos: google.maps.LatLngLiteral) {
-          return `${pos.lat.toFixed(6)}:${pos.lng.toFixed(6)}`;
-        }
+  // Step 2: After centering, check if card top is still clipped
+  google.maps.event.addListenerOnce(this.map, 'idle', () => {
+    const updatedCardRect =
+      (this.container.firstElementChild as HTMLElement)?.getBoundingClientRect();
+    const updatedMapRect =
+      this.map.getDiv().getBoundingClientRect();
+    const updatedSafeTop =
+      updatedMapRect.top + topInset + padding;
 
-        setPosition(position: google.maps.LatLngLiteral) {
-          const newKey = this.keyForPos(position);
-          if (newKey !== this.keyForPos(this.position)) {
-            this.didPanForKey = null;
-          }
-          this.position = position;
-          this.draw();
-        }
+    if (updatedCardRect && updatedCardRect.top < updatedSafeTop) {
+      const nudgeY = updatedCardRect.top - updatedSafeTop;
+      this.map.panBy(0, nudgeY);
 
-        onAdd() {
-          this.getPanes()?.floatPane?.appendChild(this.container);
-        }
-
-        draw() {
-          const projection = this.getProjection();
-          if (!projection) return;
-
-          const point = projection.fromLatLngToDivPixel(
-            new google.maps.LatLng(this.position)
-          );
-          if (!point) return;
-
-          this.container.style.left = `${point.x}px`;
-          this.container.style.top = `${point.y}px`;
-
-          const key = this.keyForPos(this.position);
-          if (this.didPanForKey === key) return;
-          if (this.isPanning) return;
-
-          requestAnimationFrame(() => {
-            this.runCollisionCheckAndPan();
-          });
-        }
-
-        private runCollisionCheckAndPan() {
-          if (this.isPanning) return;
-
-          const mapDiv = this.map.getDiv() as HTMLElement;
-          const mapRect = mapDiv.getBoundingClientRect();
-          const overlayRect = this.container.getBoundingClientRect();
-
-          const padding = 12;
-          const topInset = 120;
-
-          const safeTop = mapRect.top + topInset + padding;
-          const safeLeft = mapRect.left + padding;
-          const safeRight = mapRect.right - padding;
-          const safeBottom = mapRect.bottom - padding;
-
-          const outsideTop = overlayRect.top < safeTop;
-          const outsideLeft = overlayRect.left < safeLeft;
-          const outsideRight = overlayRect.right > safeRight;
-          const outsideBottom = overlayRect.bottom > safeBottom;
-
-          const hasCollision =
-            outsideTop || outsideLeft || outsideRight || outsideBottom;
-          if (!hasCollision) return;
-
-          this.didPanForKey = this.keyForPos(this.position);
-          this.isPanning = true;
-
-          // Step 1: Center the marker — fixes horizontal overflow
-          this.map.panTo(this.position);
-
-          // Step 2: After centering, check if top is still clipped
-          google.maps.event.addListenerOnce(this.map, 'idle', () => {
-            const updatedOverlayRect =
-              this.container.getBoundingClientRect();
-            const updatedMapRect =
-              this.map.getDiv().getBoundingClientRect();
-            const updatedSafeTop =
-              updatedMapRect.top + topInset + padding;
-
-            if (updatedOverlayRect.top < updatedSafeTop) {
-              // Card top is still clipped — nudge map down
-              const nudgeY = updatedOverlayRect.top - updatedSafeTop;
-              this.map.panBy(0, nudgeY);
-
-              google.maps.event.addListenerOnce(this.map, 'idle', () => {
-                this.isPanning = false;
-              });
-            } else {
-              this.isPanning = false;
-            }
-          });
-        }
-
-        onRemove() {
-          this.container.parentNode?.removeChild(this.container);
-        }
-      }
-
-      const overlay = new ReactOverlayView(position, containerRef.current, map);
-      overlay.setMap(map);
-
-      overlayRef.current = overlay;
-
-      google.maps.OverlayView.preventMapHitsAndGesturesFrom(
-        containerRef.current
-      );
-
-      return () => {
-        if (overlayRef.current) {
-          overlayRef.current.setMap(null);
-          overlayRef.current = null;
-        }
-      };
-    },
-    [map, position]
-  );
-
-  useEffect(
-    function closeOverlayOnMapClick() {
-      if (!map || !onOverlayClose) return;
-
-      const mapClickListener = map.addListener('click', () => {
-        onOverlayClose();
+      google.maps.event.addListenerOnce(this.map, 'idle', () => {
+        this.isPanning = false;
       });
-
-      return () => google.maps.event.removeListener(mapClickListener);
-    },
-    [map, onOverlayClose]
-  );
-
-  return containerRef.current && children
-    ? createPortal(children, containerRef.current)
-    : null;
+    } else {
+      this.isPanning = false;
+    }
+  });
 }
 ```
 
-The flow is:
+The **only change**: everywhere we used `this.container.getBoundingClientRect()`, we now use `this.container.firstElementChild.getBoundingClientRect()`.
 ```
-Marker clicked
-  │
-  ▼
-draw() → position overlay → collision detected?
-  │                              │
-  No → done                     Yes
-                                 │
-                                 ▼
-                    Step 1: panTo(marker position)
-                    Centers marker horizontally → fixes left/right overflow
-                                 │
-                                 ▼
-                    Wait for pan to finish (idle)
-                                 │
-                                 ▼
-                    Step 2: Re-measure overlay top
-                    Still clipped? → panBy(0, nudgeY) to push map down
-                    Fits? → done ✅
+this.container          → the invisible anchor at the marker point
+this.container.firstElementChild → the .overlayAnchor div (the visible card)

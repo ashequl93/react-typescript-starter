@@ -5,39 +5,60 @@ private runCollisionCheckAndPan(markerPoint: google.maps.Point) {
   const mapRect = mapDiv.getBoundingClientRect();
   const overlayRect = this.container.getBoundingClientRect();
 
+  console.log('=== COLLISION DEBUG ===');
+  console.log('Map rect:', {
+    top: mapRect.top,
+    bottom: mapRect.bottom,
+    left: mapRect.left,
+    right: mapRect.right,
+    width: mapRect.width,
+    height: mapRect.height,
+  });
+  console.log('Overlay rect:', {
+    top: overlayRect.top,
+    bottom: overlayRect.bottom,
+    left: overlayRect.left,
+    right: overlayRect.right,
+    width: overlayRect.width,
+    height: overlayRect.height,
+  });
+  console.log('Marker point:', { x: markerPoint.x, y: markerPoint.y });
+
   const padding = 12;
   const topInset = 120;
+  const caretAndMarkerGap = 58;
 
   const safeTop = mapRect.top + topInset + padding;
+  const safeBottom = mapRect.bottom - padding;
   const safeLeft = mapRect.left + padding;
   const safeRight = mapRect.right - padding;
-  const safeBottom = mapRect.bottom - padding;
 
   const outsideTop = overlayRect.top < safeTop;
   const outsideLeft = overlayRect.left < safeLeft;
   const outsideRight = overlayRect.right > safeRight;
   const outsideBottom = overlayRect.bottom > safeBottom;
 
+  console.log('Safe zone:', { safeTop, safeBottom, safeLeft, safeRight });
+  console.log('Overflow:', { outsideTop, outsideLeft, outsideRight, outsideBottom });
+
   const hasCollision = outsideTop || outsideLeft || outsideRight || outsideBottom;
-  if (!hasCollision) return;
+  if (!hasCollision) {
+    console.log('No collision, skipping pan');
+    return;
+  }
 
   this.didPanForKey = this.keyForPos(this.position);
   this.isPanning = true;
 
-  // ✅ KEY FIX: Account for overlay size when choosing the target
-  // The overlay extends DOWN and RIGHT from the marker,
-  // so the marker needs to be HIGH and LEFT enough for the card to fit
-
-  const overlayWidth = overlayRect.width;
-  const overlayHeight = overlayRect.height;
-
-  // Target: position the marker so the ENTIRE card fits inside the map
-  // Marker goes to upper-left area, leaving room for the card below/right
-  const targetX = (mapRect.width - overlayWidth) / 2;   // center the CARD, not the marker
-  const targetY = topInset + padding + 20;               // just below the safe top
+  const targetX = mapRect.width / 2;
+  const targetY = topInset + padding + overlayRect.height + caretAndMarkerGap + 20;
 
   const dx = markerPoint.x - targetX;
   const dy = markerPoint.y - targetY;
+
+  console.log('Target:', { targetX, targetY });
+  console.log('Pan by:', { dx, dy });
+  console.log('=== END DEBUG ===');
 
   if (Math.abs(dx) < 8 && Math.abs(dy) < 8) {
     this.isPanning = false;
@@ -50,35 +71,3 @@ private runCollisionCheckAndPan(markerPoint: google.maps.Point) {
     this.isPanning = false;
   });
 }
-```
-
-## What Changed and Why
-```
-BEFORE:
-  Target = lower-middle (50%, 72%)
-  Problem = card extends below marker, falls off screen
-
-  Map visible area:
-  ┌─────────────────────┐
-  │                     │
-  │                     │
-  │                     │
-  │          📌 ← marker lands here (72% down)
-  │           ┌──Card──┐│
-  │           │        ││
-  └───────────┴────────┘│  ← card overflows!
-                        │
-
-AFTER:
-  Target = upper area, offset by card size
-  Result = card has room to expand
-
-  Map visible area:
-  ┌─────────────────────┐
-  │  header/search      │
-  │     📌 ← marker lands here (below header)
-  │      ┌──Card──┐     │
-  │      │        │     │
-  │      └────────┘     │  ← fits! ✅
-  │                     │
-  └─────────────────────┘

@@ -4,7 +4,6 @@ private runCollisionCheckAndPan() {
   const mapDiv = this.map.getDiv() as HTMLElement;
   const mapRect = mapDiv.getBoundingClientRect();
 
-  // Get the VISIBLE card, not just the anchor container
   const cardElement = this.container.firstElementChild as HTMLElement;
   if (!cardElement) return;
   const cardRect = cardElement.getBoundingClientRect();
@@ -29,33 +28,33 @@ private runCollisionCheckAndPan() {
   this.didPanForKey = this.keyForPos(this.position);
   this.isPanning = true;
 
-  // Step 1: Center the marker
-  this.map.panTo(this.position);
+  // Calculate ALL overflow in one go
+  let dx = 0;
+  let dy = 0;
 
-  // Step 2: After centering, check if card top is still clipped
+  if (outsideRight) dx = cardRect.right - safeRight + padding;
+  if (outsideLeft) dx = cardRect.left - safeLeft - padding;
+  if (outsideTop) dy = cardRect.top - safeTop - padding;
+  if (outsideBottom) dy = cardRect.bottom - safeBottom + padding;
+
+  if (Math.abs(dx) < 8 && Math.abs(dy) < 8) {
+    this.isPanning = false;
+    return;
+  }
+
+  // Single smooth pan
+  this.map.panBy(dx, dy);
+
   google.maps.event.addListenerOnce(this.map, 'idle', () => {
-    const updatedCardRect =
-      (this.container.firstElementChild as HTMLElement)?.getBoundingClientRect();
-    const updatedMapRect =
-      this.map.getDiv().getBoundingClientRect();
-    const updatedSafeTop =
-      updatedMapRect.top + topInset + padding;
-
-    if (updatedCardRect && updatedCardRect.top < updatedSafeTop) {
-      const nudgeY = updatedCardRect.top - updatedSafeTop;
-      this.map.panBy(0, nudgeY);
-
-      google.maps.event.addListenerOnce(this.map, 'idle', () => {
-        this.isPanning = false;
-      });
-    } else {
-      this.isPanning = false;
-    }
+    this.isPanning = false;
   });
 }
 ```
 
-The **only change**: everywhere we used `this.container.getBoundingClientRect()`, we now use `this.container.firstElementChild.getBoundingClientRect()`.
+This works now because we're measuring `cardRect` (the actual visible card) instead of `this.container` (the anchor). So the overflow amounts are correct on the first measurement — no need for a second check.
 ```
-this.container          → the invisible anchor at the marker point
-this.container.firstElementChild → the .overlayAnchor div (the visible card)
+Before (two jumps):
+  panTo → pause → panBy → done
+
+After (one smooth pan):
+  panBy(dx, dy) → done ✅

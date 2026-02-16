@@ -1,63 +1,51 @@
-private runCollisionCheckAndPan(markerPoint: google.maps.Point) {
+private runCollisionCheckAndPan() {
   if (this.isPanning) return;
 
   const mapDiv = this.map.getDiv() as HTMLElement;
   const mapRect = mapDiv.getBoundingClientRect();
   const overlayRect = this.container.getBoundingClientRect();
 
-  console.log('=== COLLISION DEBUG ===');
-  console.log('Map rect:', {
-    top: mapRect.top,
-    bottom: mapRect.bottom,
-    left: mapRect.left,
-    right: mapRect.right,
-    width: mapRect.width,
-    height: mapRect.height,
-  });
-  console.log('Overlay rect:', {
-    top: overlayRect.top,
-    bottom: overlayRect.bottom,
-    left: overlayRect.left,
-    right: overlayRect.right,
-    width: overlayRect.width,
-    height: overlayRect.height,
-  });
-  console.log('Marker point:', { x: markerPoint.x, y: markerPoint.y });
-
   const padding = 12;
   const topInset = 120;
   const caretAndMarkerGap = 58;
 
   const safeTop = mapRect.top + topInset + padding;
-  const safeBottom = mapRect.bottom - padding;
   const safeLeft = mapRect.left + padding;
   const safeRight = mapRect.right - padding;
+  const safeBottom = mapRect.bottom - padding;
 
   const outsideTop = overlayRect.top < safeTop;
   const outsideLeft = overlayRect.left < safeLeft;
   const outsideRight = overlayRect.right > safeRight;
   const outsideBottom = overlayRect.bottom > safeBottom;
 
-  console.log('Safe zone:', { safeTop, safeBottom, safeLeft, safeRight });
-  console.log('Overflow:', { outsideTop, outsideLeft, outsideRight, outsideBottom });
-
   const hasCollision = outsideTop || outsideLeft || outsideRight || outsideBottom;
-  if (!hasCollision) {
-    console.log('No collision, skipping pan');
-    return;
-  }
+  if (!hasCollision) return;
 
   this.didPanForKey = this.keyForPos(this.position);
   this.isPanning = true;
 
-  const targetX = mapRect.width / 2;
-  const targetY = topInset + padding + overlayRect.height + caretAndMarkerGap + 20;
+  // Calculate how much the overlay overflows on each side
+  // and pan by EXACTLY that amount
 
-  const dx = markerPoint.x - targetX;
-  const dy = markerPoint.y - targetY;
+  let dx = 0;
+  let dy = 0;
 
-  console.log('Target:', { targetX, targetY });
-  console.log('Pan by:', { dx, dy });
+  if (outsideTop) {
+    dy = overlayRect.top - safeTop;       // negative: pan map up
+  }
+  if (outsideBottom) {
+    dy = overlayRect.bottom - safeBottom;  // positive: pan map down
+  }
+  if (outsideLeft) {
+    dx = overlayRect.left - safeLeft;      // negative: pan map left
+  }
+  if (outsideRight) {
+    dx = overlayRect.right - safeRight;    // positive: pan map right
+  }
+
+  console.log('=== FIX DEBUG ===');
+  console.log('Overflow amounts:', { dx, dy });
   console.log('=== END DEBUG ===');
 
   if (Math.abs(dx) < 8 && Math.abs(dy) < 8) {
@@ -69,5 +57,37 @@ private runCollisionCheckAndPan(markerPoint: google.maps.Point) {
 
   google.maps.event.addListenerOnce(this.map, "idle", () => {
     this.isPanning = false;
+  });
+}
+```
+
+## What Changed and Why
+
+**Before:** We calculated target position using `markerPoint` from `fromLatLngToDivPixel` — those coordinates are in a different coordinate space and gave us wildly wrong pan values (-222, -562).
+
+**After:** We use `getBoundingClientRect()` for **everything** — both the overlay and the map are in **screen pixel space**. We simply calculate **how much the overlay overflows** and pan by exactly that amount.
+```
+Overlay right edge: 520
+Safe right edge:    378
+Overflow:           520 - 378 = 142px
+
+→ panBy(142, 0) → slides map 142px right → overlay moves left into view ✅
+
+draw() {
+  const projection = this.getProjection();
+  if (!projection) return;
+
+  const point = projection.fromLatLngToDivPixel(new google.maps.LatLng(this.position));
+  if (!point) return;
+
+  this.container.style.left = `${point.x}px`;
+  this.container.style.top = `${point.y}px`;
+
+  const key = this.keyForPos(this.position);
+  if (this.didPanForKey === key) return;
+  if (this.isPanning) return;
+
+  requestAnimationFrame(() => {
+    this.runCollisionCheckAndPan();  // no parameter needed!
   });
 }

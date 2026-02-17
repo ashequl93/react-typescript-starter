@@ -1,49 +1,229 @@
-private runCollisionCheckAndPan() {
-  if (this.isPanning) return;
+]import {
+  useContext,
+  useEffect,
+  useRef,
+  type PropsWithChildren
+} from 'react';
 
-  const mapDiv = this.map.getDiv() as HTMLElement;
-  const mapRect = mapDiv.getBoundingClientRect();
+import { GoogleMapContext } from './googleMapContext';
 
-  const cardElement = this.container.firstElementChild as HTMLElement;
-  if (!cardElement) return;
-  const cardRect = cardElement.getBoundingClientRect();
+export interface OverlayViewProps extends PropsWithChildren {
+  position?: google.maps.LatLng | google.maps.LatLngLiteral | null;
+  onOverlayClose?: () => void;
+}
 
-  const padding = 12;
-  const topInset = 120;
+/*
+  Renders a Google Maps OverlayView for displaying custom overlay content
+  at a specific LatLng position.
 
-  const safeTop = mapRect.top + topInset + padding;
-  const safeLeft = mapRect.left + padding;
-  const safeRight = mapRect.right - padding;
-  const safeBottom = mapRect.bottom - padding;
+  Architecture: Instead of createPortal (which causes React vs Google Maps
+  DOM ownership conflicts on unmount), children are rendered in React's
+  normal tree. A useEffect then physically moves the rendered DOM node
+  into Google Maps' float pane. On cleanup, the node is moved back so
+  React can unmount it without errors.
+*/
+export function OverlayView({
+  position,
+  children,
+  onOverlayClose
+}: OverlayViewProps) {
+  const overlayRef = useRef<google.maps.OverlayView | null>(null);
+  // Google Maps' container — positioned absolutely inside the float pane
+  const gmContainerRef = useRef(document.createElement('div'));
+  // React-rendered div that holds the children
+  const childrenRef = useRef<HTMLDivElement | null>(null);
 
-  const outsideTop = cardRect.top < safeTop;
-  const outsideLeft = cardRect.left < safeLeft;
-  const outsideRight = cardRect.right > safeRight;
-  const outsideBottom = cardRect.bottom > safeBottom;
+  const { map } = useContext(GoogleMapContext);
 
-  const hasCollision =
-    outsideTop || outsideLeft || outsideRight || outsideBottom;
-  if (!hasCollision) return;
+  // Effect 1: Create the Google Maps OverlayView
+  useEffect(
+    function createOverlayView() {
+      if (!map || !position) return;
 
-  this.didPanForKey = this.keyForPos(this.position);
-  this.isPanning = true;
+      const gmContainer = gmContainerRef.current;
 
-  let dx = 0;
-  let dy = 0;
+      class ReactOverlayView extends google.maps.OverlayView {
+        position: google.maps.LatLng | google.maps.LatLngLiteral;
+        container: HTMLDivElement;
+        map: google.maps.Map;
 
-  if (outsideRight) dx = cardRect.right - safeRight + padding;
-  if (outsideLeft) dx = cardRect.left - safeLeft - padding;
-  if (outsideTop) dy = cardRect.top - safeTop - padding;
-  if (outsideBottom) dy = cardRect.bottom - safeBottom + padding;
+        private didPanForKey: string | null = null;
+        private isPanning = false;
 
-  if (Math.abs(dx) < 8 && Math.abs(dy) < 8) {
-    this.isPanning = false;
-    return;
-  }
+        constructor(
+          position: google.maps.LatLng | google.maps.LatLngLiteral,
+          container: HTMLDivElement,
+          map: google.maps.Map
+        ) {
+          super();
+          this.position = position;
+          this.container = container;
+          this.map = map;
+          this.container.style.position = 'absolute';
+        }
 
-  this.map.panBy(dx, dy);
+        private toLatLngLiteral(
+          pos: google.maps.LatLng | google.maps.LatLngLiteral
+        ): google.maps.LatLngLiteral {
+          return typeof pos.lat === 'function'
+            ? { lat: pos.lat(), lng: (pos as google.maps.LatLng).lng() }
+            : (pos as google.maps.LatLngLiteral);
+        }
 
-  google.maps.event.addListenerOnce(this.map, 'idle', () => {
-    this.isPanning = false;
-  });
+        private keyForPos(
+          pos: google.maps.LatLng | google.maps.LatLngLiteral
+        ) {
+          const literal = this.toLatLngLiteral(pos);
+          return `${literal.lat.toFixed(6)}:${literal.lng.toFixed(6)}`;
+        }
+
+        onAdd() {
+          this.getPanes()?.floatPane?.appendChild(this.container);
+        }
+
+        draw() {
+          const projection = this.getProjection();
+          if (!projection) return;
+
+          const literal = this.toLatLngLiteral(this.position);
+          const point = projection.fromLatLngToDivPixel(
+            new google.maps.LatLng(literal)
+          );
+          if (!point) return;
+
+          this.container.style.left = `${point.x}px`;
+          this.container.style.top = `${point.y}px`;
+
+          const key = this.keyForPos(this.position);
+          if (this.didPanForKey === key) return;
+          if (this.isPanning) return;
+
+          requestAnimationFrame(() => {
+            this.runCollisionCheckAndPan();
+          });
+        }
+
+        private runCollisionCheckAndPan() {
+          if (this.isPanning) return;
+
+          const mapDiv = this.map.getDiv() as HTMLElement;
+          const mapRect = mapDiv.getBoundingClientRect();
+
+          const cardElement = this.container.firstElementChild as HTMLElement;
+          if (!cardElement) return;
+          const cardRect = cardElement.getBoundingClientRect();
+
+          const padding = 12;
+          const topInset = 120;
+
+          const safeTop = mapRect.top + topInset + padding;
+          const safeLeft = mapRect.left + padding;
+          const safeRight = mapRect.right - padding;
+          const safeBottom = mapRect.bottom - padding;
+
+          const outsideTop = cardRect.top < safeTop;
+          const outsideLeft = cardRect.left < safeLeft;
+          const outsideRight = cardRect.right > safeRight;
+          const outsideBottom = cardRect.bottom > safeBottom;
+
+          const hasCollision =
+            outsideTop || outsideLeft || outsideRight || outsideBottom;
+          if (!hasCollision) return;
+
+          this.didPanForKey = this.keyForPos(this.position);
+          this.isPanning = true;
+
+          let dx = 0;
+          let dy = 0;
+
+          if (outsideRight) dx = cardRect.right - safeRight + padding;
+          if (outsideLeft) dx = cardRect.left - safeLeft - padding;
+          if (outsideTop) dy = cardRect.top - safeTop - padding;
+          if (outsideBottom) dy = cardRect.bottom - safeBottom + padding;
+
+          if (Math.abs(dx) < 8 && Math.abs(dy) < 8) {
+            this.isPanning = false;
+            return;
+          }
+
+          this.map.panBy(dx, dy);
+
+          google.maps.event.addListenerOnce(this.map, 'idle', () => {
+            this.isPanning = false;
+          });
+        }
+
+        onRemove() {
+          this.container.parentNode?.removeChild(this.container);
+        }
+      }
+
+      const overlay = new ReactOverlayView(position, gmContainer, map);
+      overlay.setMap(map);
+      overlayRef.current = overlay;
+
+      google.maps.OverlayView.preventMapHitsAndGesturesFrom(gmContainer);
+
+      return () => {
+        // Move React's children back BEFORE destroying the overlay
+        // so React can unmount them cleanly from its own tree
+        const childrenNode = childrenRef.current;
+        if (childrenNode && childrenNode.parentNode === gmContainer) {
+          document.body.appendChild(childrenNode);
+          childrenNode.style.display = 'none';
+        }
+
+        if (overlayRef.current) {
+          overlayRef.current.setMap(null);
+          overlayRef.current = null;
+        }
+      };
+    },
+    [map, position]
+  );
+
+  // Effect 2: Move the React-rendered children into Google Maps' container
+  useEffect(
+    function syncChildrenToOverlay() {
+      const gmContainer = gmContainerRef.current;
+      const childrenNode = childrenRef.current;
+      if (!childrenNode || !overlayRef.current) return;
+
+      // Move React's div into Google Maps' overlay container
+      gmContainer.appendChild(childrenNode);
+      childrenNode.style.display = '';
+
+      return () => {
+        // On cleanup, move back so React can handle unmount
+        if (childrenNode.parentNode === gmContainer) {
+          document.body.appendChild(childrenNode);
+          childrenNode.style.display = 'none';
+        }
+      };
+    }
+  );
+
+  // Effect 3: Close overlay on map click
+  useEffect(
+    function closeOverlayOnMapClick() {
+      if (!map || !onOverlayClose) return;
+
+      const mapClickListener = map.addListener('click', () => {
+        onOverlayClose();
+      });
+
+      return () => google.maps.event.removeListener(mapClickListener);
+    },
+    [map, onOverlayClose]
+  );
+
+  if (!position || !children) return null;
+
+  // Children rendered in React's normal tree — Effect 2 moves this
+  // node into Google Maps' container after render
+  return (
+    <div ref={childrenRef} style={{ display: 'contents' }}>
+      {children}
+    </div>
+  );
 }

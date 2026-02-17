@@ -1,1 +1,10 @@
-Marker key strategy: Changed from key={hotel.lhwid} to key={index} to prevent a removeChild crash during page navigation. The Marker component renders children into a <div> that gets passed to Google Maps' AdvancedMarkerElement as content. When unique keys are used and the hotels array changes (e.g., during navigation), React tries to unmount each Marker individually and remove its children from the DOM. However, Google Maps already controls those DOM nodes, causing a NotFoundError: Failed to execute 'removeChild' on 'Node'. Using index keys avoids aggressive unmounting. A proper long-term fix would be to decouple React's DOM ownership from Google Maps' in the Marker component itself.
+function hasValidCoordinates(hotel: HotelSearchResultFragment): hotel is HotelSearchResultFragment & {
+  postalAddress: { geolocation: { latitude: number; longitude: number } }
+} {
+  return (
+    hotel.postalAddress?.geolocation?.latitude != null &&
+    hotel.postalAddress?.geolocation?.longitude != null
+  )
+}
+
+const filteredHotels = hotels?.filter(hasValidCoordinates)

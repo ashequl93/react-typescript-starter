@@ -45,3 +45,95 @@ export function useMapBounds(
     hasFittedRef.current = false;
   }, [positionsKey]);
 }
+
+========
+// Same file — add this above PropertySearchWithMap
+
+function MapContent({
+  hotels,
+  selectedHotel,
+  isOverlayOpen,
+  isMapFullScreen,
+  onMarkerClick,
+  onOverlayClose,
+  onToggleFullScreen,
+  ...rest
+}: {
+  hotels?: HotelSearchResultFragment[] | null;
+  selectedHotel: HotelSearchResultFragment | null;
+  isOverlayOpen: boolean;
+  isMapFullScreen: boolean;
+  onMarkerClick: (hotel: HotelSearchResultFragment) => void;
+  onOverlayClose: () => void;
+  onToggleFullScreen: () => void;
+  agentProfile?: AgentProfile;
+  resources?: Resources;
+  showAvailability?: boolean;
+  isDraftMode?: boolean;
+  onViewRoomsClick?: (hotel: HotelSearchResultFragment) => void;
+  onViewHotelButtonClick?: (hotel: HotelSearchResultFragment) => void;
+  hotelLinkSearchValues?: string;
+}) {
+  // ✅ This component is INSIDE <GoogleMap>, so it has access to GoogleMapContext
+  // ✅ Hook called at the top level of a component
+  useMapBounds(
+    (hotels ?? []).map(hotel => ({
+      lat: hotel.postalAddress?.geolocation?.latitude || 0,
+      lng: hotel.postalAddress?.geolocation?.longitude || 0
+    }))
+  );
+
+  return (
+    <>
+      {hotels?.map(hotel => (
+        <Marker
+          key={hotel.lhwid}
+          position={{
+            lat: hotel.postalAddress?.geolocation?.latitude || 0,
+            lng: hotel.postalAddress?.geolocation?.longitude || 0
+          }}
+          onClick={() => onMarkerClick(hotel)}
+        >
+          <Image
+            src="/mapMarker.svg"
+            alt=""
+            width={48}
+            height={48}
+            unoptimized
+          />
+        </Marker>
+      ))}
+
+      {selectedHotel && isOverlayOpen ? (
+        <OverlayView
+          position={{
+            lat: selectedHotel.postalAddress?.geolocation?.latitude || 0,
+            lng: selectedHotel.postalAddress?.geolocation?.longitude || 0
+          }}
+          onOverlayClose={onOverlayClose}
+        >
+          <div className={styles.overlayAnchor}>
+            <PropertyMarkerOverlay
+              hotel={selectedHotel}
+              isCompact={!isMapFullScreen}
+              {...rest}
+            />
+          </div>
+        </OverlayView>
+      ) : undefined}
+
+      <MapControl position={'TOP_RIGHT'}>
+        <div className={styles.fullScreenDesktop}>
+          <IconButton onClick={onToggleFullScreen}>
+            <div className={styles.mapExpandIconWrapper}>
+              <Icon
+                icon={isMapFullScreen ? XIcon : FullScreenIcon}
+                size="medium"
+              />
+            </div>
+          </IconButton>
+        </div>
+      </MapControl>
+    </>
+  );
+}

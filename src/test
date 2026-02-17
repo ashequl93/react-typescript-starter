@@ -1,147 +1,93 @@
-import { useContext, useEffect, useRef } from 'react';
-import { GoogleMapContext } from './googleMapContext';
-
-export const MAX_ZOOM_LEVEL = 15;
-
-export function useMapBounds(
-  positions: (google.maps.LatLng | google.maps.LatLngLiteral)[],
-  padding: number = 50
-) {
-  const { map } = useContext(GoogleMapContext);
-  const hasFittedRef = useRef(false);
-
-  // Stabilize positions — only refit when lat/lng values actually change
-  const positionsKey = positions
-    .map(p =>
-      p instanceof google.maps.LatLng
-        ? `${p.lat()},${p.lng()}`
-        : `${p.lat},${p.lng}`
-    )
-    .join('|');
-
-  useEffect(() => {
-    if (!map || !positions.length) return;
-
-    // Only fit bounds once per unique set of positions
-    if (hasFittedRef.current) return;
-    hasFittedRef.current = true;
-
-    const bounds = new google.maps.LatLngBounds();
-    positions.forEach(position => bounds.extend(position));
-    map.fitBounds(bounds, padding);
-
-    // Prevent over-zoom
-    const listener = google.maps.event.addListenerOnce(map, 'idle', () => {
-      if ((map.getZoom() ?? 0) > MAX_ZOOM_LEVEL) {
-        map.setZoom(MAX_ZOOM_LEVEL);
-      }
-    });
-
-    return () => google.maps.event.removeListener(listener);
-  }, [map, positionsKey, padding]);
-
-  // Reset when positions actually change
-  useEffect(() => {
-    hasFittedRef.current = false;
-  }, [positionsKey]);
-}
-
-========
-// Same file — add this above PropertySearchWithMap
-
-function MapContent({
-  hotels,
-  selectedHotel,
-  isOverlayOpen,
-  isMapFullScreen,
-  onMarkerClick,
-  onOverlayClose,
-  onToggleFullScreen,
-  ...rest
-}: {
-  hotels?: HotelSearchResultFragment[] | null;
-  selectedHotel: HotelSearchResultFragment | null;
-  isOverlayOpen: boolean;
-  isMapFullScreen: boolean;
-  onMarkerClick: (hotel: HotelSearchResultFragment) => void;
-  onOverlayClose: () => void;
-  onToggleFullScreen: () => void;
-  agentProfile?: AgentProfile;
-  resources?: Resources;
-  showAvailability?: boolean;
-  isDraftMode?: boolean;
-  onViewRoomsClick?: (hotel: HotelSearchResultFragment) => void;
-  onViewHotelButtonClick?: (hotel: HotelSearchResultFragment) => void;
-  hotelLinkSearchValues?: string;
-}) {
-  // ✅ This component is INSIDE <GoogleMap>, so it has access to GoogleMapContext
-  // ✅ Hook called at the top level of a component
-  useMapBounds(
-    (hotels ?? []).map(hotel => ({
-      lat: hotel.postalAddress?.geolocation?.latitude || 0,
-      lng: hotel.postalAddress?.geolocation?.longitude || 0
-    }))
-  );
-
-  return (
-    <>
-      {hotels?.map(hotel => (
-        <Marker
-          key={hotel.lhwid}
-          position={{
-            lat: hotel.postalAddress?.geolocation?.latitude || 0,
-            lng: hotel.postalAddress?.geolocation?.longitude || 0
-          }}
-          onClick={() => onMarkerClick(hotel)}
-        >
-          <Image
-            src="/mapMarker.svg"
-            alt=""
-            width={48}
-            height={48}
-            unoptimized
-          />
-        </Marker>
-      ))}
-
-      {selectedHotel && isOverlayOpen ? (
-        <OverlayView
-          position={{
-            lat: selectedHotel.postalAddress?.geolocation?.latitude || 0,
-            lng: selectedHotel.postalAddress?.geolocation?.longitude || 0
-          }}
-          onOverlayClose={onOverlayClose}
-        >
-          <div className={styles.overlayAnchor}>
-            <PropertyMarkerOverlay
-              hotel={selectedHotel}
-              isCompact={!isMapFullScreen}
-              {...rest}
-            />
-          </div>
-        </OverlayView>
-      ) : undefined}
-
-      <MapControl position={'TOP_RIGHT'}>
-        <div className={styles.fullScreenDesktop}>
-          <IconButton onClick={onToggleFullScreen}>
-            <div className={styles.mapExpandIconWrapper}>
-              <Icon
-                icon={isMapFullScreen ? XIcon : FullScreenIcon}
-                size="medium"
-              />
-            </div>
-          </IconButton>
-        </div>
-      </MapControl>
-    </>
-  );
-}
-
-const positionsKey = positions
-  .map(p => {
-    const lat = typeof p.lat === 'function' ? p.lat() : p.lat;
-    const lng = typeof p.lng === 'function' ? p.lng() : p.lng;
-    return `${lat},${lng}`;
-  })
-  .join('|');
+export const postalAddresses: PostalAddressFieldsFragment[] = [
+  {
+    streetAddress: '1600 Amphitheatre Parkway',
+    extendedAddress: null,
+    locality: 'Mountain View',
+    postalCode: '94043',
+    country: 'United States of America',
+    countryCode: '1',
+    timezone: 'America/Los_Angeles',
+    geolocation: {
+      latitude: 37.422,
+      longitude: -122.084
+    }
+  },
+  {
+    streetAddress: '1 Infinite Loop',
+    extendedAddress: null,
+    locality: 'Cupertino',
+    postalCode: '95014',
+    country: 'United States of America',
+    countryCode: '1',
+    timezone: 'America/Los_Angeles',
+    geolocation: {
+      latitude: 37.33182,
+      longitude: -122.03118
+    }
+  },
+  {
+    streetAddress: '350 Fifth Avenue',
+    extendedAddress: 'Empire State Building',
+    locality: 'New York',
+    postalCode: '10118',
+    country: 'United States of America',
+    countryCode: '1',
+    timezone: 'America/New_York',
+    geolocation: {
+      latitude: 40.7484,
+      longitude: -73.9857
+    }
+  },
+  {
+    streetAddress: '221B Baker Street',
+    extendedAddress: null,
+    locality: 'London',
+    postalCode: 'NW1 6XE',
+    country: 'United Kingdom',
+    countryCode: '44',
+    timezone: 'Europe/London',
+    geolocation: {
+      latitude: 51.5237,
+      longitude: -0.1585
+    }
+  },
+  {
+    streetAddress: '4 Chome-2-8 Shibakoen',
+    extendedAddress: null,
+    locality: 'Minato City, Tokyo',
+    postalCode: '105-0011',
+    country: 'Japan',
+    countryCode: '81',
+    timezone: 'Asia/Tokyo',
+    geolocation: {
+      latitude: 35.6586,
+      longitude: 139.7454
+    }
+  },
+  {
+    streetAddress: 'Eiffel Tower',
+    extendedAddress: 'Champ de Mars',
+    locality: 'Paris',
+    postalCode: '75007',
+    country: 'France',
+    countryCode: '33',
+    timezone: 'Europe/Paris',
+    geolocation: {
+      latitude: 48.8584,
+      longitude: 2.2945
+    }
+  },
+  {
+    streetAddress: 'Sydney Opera House',
+    extendedAddress: null,
+    locality: 'Sydney',
+    postalCode: '2000',
+    country: 'Australia',
+    countryCode: '61',
+    timezone: 'Australia/Sydney',
+    geolocation: {
+      latitude: -33.8568,
+      longitude: 151.2153
+    }
+  }
+];

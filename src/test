@@ -1,205 +1,49 @@
-import { useContext, useEffect, useRef, type PropsWithChildren } from 'react';
-import { createPortal } from 'react-dom';
+private runCollisionCheckAndPan() {
+  if (this.isPanning) return;
 
-import { GoogleMapContext } from './googleMapContext';
+  const mapDiv = this.map.getDiv() as HTMLElement;
+  const mapRect = mapDiv.getBoundingClientRect();
 
-export interface OverlayViewProps extends PropsWithChildren {
-  position?: google.maps.LatLng | google.maps.LatLngLiteral | null;
-  onOverlayClose?: () => void;
-}
+  const cardElement = this.container.firstElementChild as HTMLElement;
+  if (!cardElement) return;
+  const cardRect = cardElement.getBoundingClientRect();
 
-/*
-  Renders a Google Maps OverlayView for displaying custom overlay content
-  at a specific LatLng position.
-*/
-export function OverlayView({
-  position,
-  children,
-  onOverlayClose
-}: OverlayViewProps) {
-  const overlayRef = useRef<google.maps.OverlayView | null>(null);
-  const containerRef = useRef(document.createElement('div'));
+  const padding = 12;
+  const topInset = 120;
 
-  const { map } = useContext(GoogleMapContext);
+  const safeTop = mapRect.top + topInset + padding;
+  const safeLeft = mapRect.left + padding;
+  const safeRight = mapRect.right - padding;
+  const safeBottom = mapRect.bottom - padding;
 
-  useEffect(
-    function createOverlayView() {
-      if (!map || !position) return;
+  const outsideTop = cardRect.top < safeTop;
+  const outsideLeft = cardRect.left < safeLeft;
+  const outsideRight = cardRect.right > safeRight;
+  const outsideBottom = cardRect.bottom > safeBottom;
 
-      class ReactOverlayView extends google.maps.OverlayView {
-        position: google.maps.LatLng | google.maps.LatLngLiteral;
-        container: HTMLDivElement;
-        map: google.maps.Map;
+  const hasCollision =
+    outsideTop || outsideLeft || outsideRight || outsideBottom;
+  if (!hasCollision) return;
 
-        private didPanForKey: string | null = null;
-        private isPanning = false;
+  this.didPanForKey = this.keyForPos(this.position);
+  this.isPanning = true;
 
-        constructor(
-          position: google.maps.LatLng | google.maps.LatLngLiteral,
-          container: HTMLDivElement,
-          map: google.maps.Map
-        ) {
-          super();
-          this.position = position;
-          this.container = container;
-          this.map = map;
-          this.container.style.position = 'absolute';
-        }
+  let dx = 0;
+  let dy = 0;
 
-        /** Safely convert LatLng or LatLngLiteral to LatLngLiteral */
-        private toLatLngLiteral(
-          pos: google.maps.LatLng | google.maps.LatLngLiteral
-        ): google.maps.LatLngLiteral {
-          return typeof pos.lat === 'function'
-            ? { lat: pos.lat(), lng: (pos as google.maps.LatLng).lng() }
-            : (pos as google.maps.LatLngLiteral);
-        }
+  if (outsideRight) dx = cardRect.right - safeRight + padding;
+  if (outsideLeft) dx = cardRect.left - safeLeft - padding;
+  if (outsideTop) dy = cardRect.top - safeTop - padding;
+  if (outsideBottom) dy = cardRect.bottom - safeBottom + padding;
 
-        private keyForPos(
-          pos: google.maps.LatLng | google.maps.LatLngLiteral
-        ) {
-          const literal = this.toLatLngLiteral(pos);
-          return `${literal.lat.toFixed(6)}:${literal.lng.toFixed(6)}`;
-        }
+  if (Math.abs(dx) < 8 && Math.abs(dy) < 8) {
+    this.isPanning = false;
+    return;
+  }
 
-        onAdd() {
-          this.getPanes()?.floatPane?.appendChild(this.container);
-        }
+  this.map.panBy(dx, dy);
 
-        draw() {
-          const projection = this.getProjection();
-          if (!projection) return;
-
-          const literal = this.toLatLngLiteral(this.position);
-          const point = projection.fromLatLngToDivPixel(
-            new google.maps.LatLng(literal)
-          );
-          if (!point) return;
-
-          this.container.style.left = `${point.x}px`;
-          this.container.style.top = `${point.y}px`;
-
-          const key = this.keyForPos(this.position);
-          if (this.didPanForKey === key) return;
-          if (this.isPanning) return;
-
-          requestAnimationFrame(() => {
-            this.runCollisionCheckAndPan();
-          });
-        }
-
-        private runCollisionCheckAndPan() {
-          if (this.isPanning) return;
-
-          const mapDiv = this.map.getDiv() as HTMLElement;
-          const mapRect = mapDiv.getBoundingClientRect();
-
-          // Measure the VISIBLE card, not the invisible anchor container
-          const cardElement = this.container.firstElementChild as HTMLElement;
-          if (!cardElement) return;
-          const cardRect = cardElement.getBoundingClientRect();
-
-          const padding = 12;
-          const topInset = 120;
-
-          const safeTop = mapRect.top + topInset + padding;
-          const safeLeft = mapRect.left + padding;
-          const safeRight = mapRect.right - padding;
-          const safeBottom = mapRect.bottom - padding;
-
-          const outsideTop = cardRect.top < safeTop;
-          const outsideLeft = cardRect.left < safeLeft;
-          const outsideRight = cardRect.right > safeRight;
-          const outsideBottom = cardRect.bottom > safeBottom;
-
-          const hasCollision =
-            outsideTop || outsideLeft || outsideRight || outsideBottom;
-          if (!hasCollision) return;
-
-          this.didPanForKey = this.keyForPos(this.position);
-          this.isPanning = true;
-
-          // Step 1: Center the marker — fixes horizontal overflow
-          const literal = this.toLatLngLiteral(this.position);
-          this.map.panTo(literal);
-
-          // Step 2: After centering, check if card top is still clipped
-          google.maps.event.addListenerOnce(this.map, 'idle', () => {
-            const updatedCardRect = (
-              this.container.firstElementChild as HTMLElement
-            )?.getBoundingClientRect();
-            const updatedMapRect = this.map
-              .getDiv()
-              .getBoundingClientRect();
-            const updatedSafeTop =
-              updatedMapRect.top + topInset + padding;
-
-            if (updatedCardRect && updatedCardRect.top < updatedSafeTop) {
-              // Card top is still clipped — nudge map down
-              const nudgeY = updatedCardRect.top - updatedSafeTop;
-              this.map.panBy(0, nudgeY);
-
-              google.maps.event.addListenerOnce(this.map, 'idle', () => {
-                this.isPanning = false;
-              });
-            } else {
-              this.isPanning = false;
-            }
-          });
-        }
-
-        onRemove() {
-          // Cleanup handled by useEffect teardown
-          // Don't manually remove — avoids conflict with React's portal
-        }
-      }
-
-      // Create an instance of the custom OverlayView class
-      const overlay = new ReactOverlayView(
-        position,
-        containerRef.current,
-        map
-      );
-      overlay.setMap(map);
-
-      overlayRef.current = overlay;
-
-      // Prevent user interactions within the overlay from bubbling up to the map
-      google.maps.OverlayView.preventMapHitsAndGesturesFrom(
-        containerRef.current
-      );
-
-      // Cleanup on unmount
-      return () => {
-        if (overlayRef.current) {
-          overlayRef.current.setMap(null);
-          overlayRef.current = null;
-        }
-        // Safely remove container if it's still attached
-        if (containerRef.current.parentNode) {
-          containerRef.current.parentNode.removeChild(containerRef.current);
-        }
-        // Create a fresh container for next mount
-        containerRef.current = document.createElement('div');
-      };
-    },
-    [map, position]
-  );
-
-  useEffect(
-    function closeOverlayOnMapClick() {
-      if (!map || !onOverlayClose) return;
-
-      const mapClickListener = map.addListener('click', () => {
-        onOverlayClose();
-      });
-
-      return () => google.maps.event.removeListener(mapClickListener);
-    },
-    [map, onOverlayClose]
-  );
-
-  return containerRef.current && children
-    ? createPortal(children, containerRef.current)
-    : null;
+  google.maps.event.addListenerOnce(this.map, 'idle', () => {
+    this.isPanning = false;
+  });
 }

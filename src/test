@@ -1,60 +1,47 @@
-private runCollisionCheckAndPan() {
-  if (this.isPanning) return;
+import { useContext, useEffect, useRef } from 'react';
+import { GoogleMapContext } from './googleMapContext';
 
-  const mapDiv = this.map.getDiv() as HTMLElement;
-  const mapRect = mapDiv.getBoundingClientRect();
+export const MAX_ZOOM_LEVEL = 15;
 
-  const cardElement = this.container.firstElementChild as HTMLElement;
-  if (!cardElement) return;
-  const cardRect = cardElement.getBoundingClientRect();
+export function useMapBounds(
+  positions: (google.maps.LatLng | google.maps.LatLngLiteral)[],
+  padding: number = 50
+) {
+  const { map } = useContext(GoogleMapContext);
+  const hasFittedRef = useRef(false);
 
-  const padding = 12;
-  const topInset = 120;
+  // Stabilize positions — only refit when lat/lng values actually change
+  const positionsKey = positions
+    .map(p =>
+      p instanceof google.maps.LatLng
+        ? `${p.lat()},${p.lng()}`
+        : `${p.lat},${p.lng}`
+    )
+    .join('|');
 
-  const safeTop = mapRect.top + topInset + padding;
-  const safeLeft = mapRect.left + padding;
-  const safeRight = mapRect.right - padding;
-  const safeBottom = mapRect.bottom - padding;
+  useEffect(() => {
+    if (!map || !positions.length) return;
 
-  const outsideTop = cardRect.top < safeTop;
-  const outsideLeft = cardRect.left < safeLeft;
-  const outsideRight = cardRect.right > safeRight;
-  const outsideBottom = cardRect.bottom > safeBottom;
+    // Only fit bounds once per unique set of positions
+    if (hasFittedRef.current) return;
+    hasFittedRef.current = true;
 
-  const hasCollision =
-    outsideTop || outsideLeft || outsideRight || outsideBottom;
-  if (!hasCollision) return;
+    const bounds = new google.maps.LatLngBounds();
+    positions.forEach(position => bounds.extend(position));
+    map.fitBounds(bounds, padding);
 
-  this.didPanForKey = this.keyForPos(this.position);
-  this.isPanning = true;
+    // Prevent over-zoom
+    const listener = google.maps.event.addListenerOnce(map, 'idle', () => {
+      if ((map.getZoom() ?? 0) > MAX_ZOOM_LEVEL) {
+        map.setZoom(MAX_ZOOM_LEVEL);
+      }
+    });
 
-  // Calculate ALL overflow in one go
-  let dx = 0;
-  let dy = 0;
+    return () => google.maps.event.removeListener(listener);
+  }, [map, positionsKey, padding]);
 
-  if (outsideRight) dx = cardRect.right - safeRight + padding;
-  if (outsideLeft) dx = cardRect.left - safeLeft - padding;
-  if (outsideTop) dy = cardRect.top - safeTop - padding;
-  if (outsideBottom) dy = cardRect.bottom - safeBottom + padding;
-
-  if (Math.abs(dx) < 8 && Math.abs(dy) < 8) {
-    this.isPanning = false;
-    return;
-  }
-
-  // Single smooth pan
-  this.map.panBy(dx, dy);
-
-  google.maps.event.addListenerOnce(this.map, 'idle', () => {
-    this.isPanning = false;
-  });
+  // Reset when positions actually change
+  useEffect(() => {
+    hasFittedRef.current = false;
+  }, [positionsKey]);
 }
-```
-
-This works now because we're measuring `cardRect` (the actual visible card) instead of `this.container` (the anchor). So the overflow amounts are correct on the first measurement — no need for a second check.
-```
-Before (two jumps):
-  panTo → pause → panBy → done
-
-After (one smooth pan):
-  panBy(dx, dy) → done ✅

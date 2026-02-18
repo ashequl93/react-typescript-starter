@@ -1,126 +1,122 @@
-import { Options } from '@contentful/rich-text-react-renderer';
-import classNames from 'classnames';
-import { PropsWithChildren, type ReactNode } from 'react';
-
-import { Icon, IconProps } from '@/basics/icons';
-import { ContentfulRichText } from '@/components/contentfulRichText';
-import { replaceParagraphsWithDivs } from '@/components/contentfulRichText/contentfulRichTextOptions';
-import type { Scalars } from '@/lib/services/graphql';
-import type { PropsWithClassName } from '@/types';
-
-import styles from './formMessage.module.css';
-
-export type FormMessageType = 'error' | 'success' | 'info' | null;
-
-interface FormMessageProps extends PropsWithChildren, PropsWithClassName {
-  type?: FormMessageType;
-  iconProps?: IconProps;
-  header?: string | null;
-  message?: string | Scalars['JSON']['output'] | null;
-}
-
-export function FormMessage({
-  children,
-  iconProps,
-  header,
-  message,
-  type,
-  className,
-  ...props
-}: Readonly<FormMessageProps>) {
-  const content = children ?? renderMessage(message);
-  if (!content) return null;
-
-  const isInfo = type === 'info';
-
-  const formMessageClass = classNames(
-    styles.formMessage,
-    className,
-    'collapseWhenEmpty',
-    {
-      [styles.success]: type === 'success',
-      [styles.info]: isInfo,
-      [styles.error]: type === 'error'
-    }
-  );
-
-  const hideMessage =
-    message == null ||
-    (typeof message === 'string' && message.trim().length === 0);
-
-  return (
-    <div
-      className={formMessageClass}
-      role="alert"
-      aria-live="polite"
-      {...props}
-    >
-      <div className={classNames(styles.content)}>
-        {header ? (
-          // --- Layout: has header ---
-          // Stack: [icon + header] on top, [message] below
-          <div
-            className={classNames(
-              'stackTight',
-              styles.headerMessage,
-              { [styles.infoWrapper]: isInfo }  // overrides alignment to flex-start for info
-            )}
-          >
-            {/* Icon sits next to header text only (aligns to top of header) */}
-            <div
-              className={classNames('clusterTight', {
-                [styles.infoHeaderRow]: isInfo,   // flex-start alignment for multi-line
-                'clusterCenter': !isInfo          // centered alignment for non-info
-              })}
-            >
-              {iconProps && <Icon {...iconProps} className={styles.icon} />}
-              <h4 className={classNames('category', styles.headerText, {
-                [styles.infoHeaderText]: isInfo
-              })}>
-                {header}
-              </h4>
-            </div>
-
-            {!hideMessage && (
-              <div className="bodyText2">
-                {renderMessage(message, replaceParagraphsWithDivs)}
-              </div>
-            )}
-          </div>
-        ) : (
-          // --- Layout: standalone (no header, just message/children) ---
-          // Info: left-aligned, all caps
-          // Others: centered (existing behaviour)
-          <div
-            className={classNames(
-              'clusterTight',
-              styles.standaloneMessage,
-              {
-                [styles.infoStandalone]: isInfo,   // left-align, flex-start for multi-line
-                'clusterCenter': !isInfo            // centered for non-info
-              }
-            )}
-          >
-            {iconProps && <Icon {...iconProps} className={styles.icon} />}
-            <h4 className={classNames('category', styles.headerText, {
-              [styles.infoHeaderText]: isInfo
-            })}>
-              {content}
-            </h4>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function renderMessage(
-  message: FormMessageProps['message'],
-  options?: Options
-): string | ReactNode | undefined {
-  if (message && typeof message === 'object' && 'json' in message) {
-    return <ContentfulRichText json={message.json} options={options} />;
+@layer basic {
+  .formMessage {
+    container-type: inline-size;
+    margin-block: 0;
   }
 
-  return message;
+  .success {
+    color: var(--color-sustainability-green);
+    background-color: rgb(from var(--color-sustainability-green) r g b / 20%);
+  }
+
+  .error {
+    color: var(--color-error);
+    background-color: rgb(from var(--color-coral-light) r g b / 20%);
+
+    & a {
+      --color: var(--color-error);
+      --color-hover: var(--color);
+    }
+  }
+
+  .info {
+    color: var(--color-slate);
+    background-color: var(--color-powder-blue);
+  }
+
+  .content {
+    --font-size-body: 0.875rem;
+
+    display: block;
+    padding: var(--spacing-vertical-small) 1.75rem;
+    font-family: var(--font-family-secondary);
+    font-size: var(--font-size-body);
+  }
+
+  /* ----------------------------------------
+   * Header row (icon + header text side by side)
+   * Default: centered (error/success)
+   * ---------------------------------------- */
+  .headerMessage {
+    justify-content: center;
+    text-align: center;
+  }
+
+  /* ----------------------------------------
+   * Info type: override stack to left-align
+   * ---------------------------------------- */
+  .infoWrapper {
+    --alignment: flex-start;  /* overrides stack utility class alignment */
+    text-align: left;
+  }
+
+  /* ----------------------------------------
+   * Info header row: icon aligns to TOP of
+   * text for multi-line, centers for single-line
+   * via align-items: flex-start + line-height trick
+   * ---------------------------------------- */
+  .infoHeaderRow {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: flex-start;  /* icon stays at top for multi-line */
+    gap: var(--spacing-tight, 0.5rem);
+  }
+
+  /* ----------------------------------------
+   * Info standalone (no header): left-aligned,
+   * all caps. Same flex-start icon alignment.
+   * ---------------------------------------- */
+  .infoStandalone {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: flex-start;
+    justify-content: flex-start;
+    text-align: left;
+  }
+
+  /* ----------------------------------------
+   * Header text
+   * ---------------------------------------- */
+  .headerText {
+    font-size: 0.875rem;
+    /* line-height matches icon size so icon optically aligns
+       with the first line of text for both single and multi-line */
+    line-height: 1.4375rem;
+  }
+
+  /* Info-specific text overrides */
+  .infoHeaderText {
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.125rem;
+    line-height: 1.4375rem; /* must match icon --size so first line aligns */
+  }
+
+  /* ----------------------------------------
+   * Icon
+   * flex-shrink: 0 prevents icon from squishing
+   * in narrow containers
+   * ---------------------------------------- */
+  .icon {
+    --size: 1.4375rem;
+    flex-shrink: 0;
+    /* No margin-top needed: line-height on the text
+       matches icon height, so flex-start aligns them perfectly */
+  }
+
+  /* ----------------------------------------
+   * Standalone message (error/success, no header)
+   * ---------------------------------------- */
+  .standaloneMessage {
+    letter-spacing: 0.125rem;
+    text-align: center;
+    text-transform: uppercase;
+    font-weight: var(--font-weight-bold);
+  }
+
+  @container (min-width: 30rem) {
+    .content {
+      padding: 1.5rem 2.1875rem;
+    }
+  }
 }

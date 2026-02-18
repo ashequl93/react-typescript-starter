@@ -1,10 +1,126 @@
-function hasValidCoordinates(hotel: HotelSearchResultFragment): hotel is HotelSearchResultFragment & {
-  postalAddress: { geolocation: { latitude: number; longitude: number } }
-} {
-  return (
-    hotel.postalAddress?.geolocation?.latitude != null &&
-    hotel.postalAddress?.geolocation?.longitude != null
-  )
+import { Options } from '@contentful/rich-text-react-renderer';
+import classNames from 'classnames';
+import { PropsWithChildren, type ReactNode } from 'react';
+
+import { Icon, IconProps } from '@/basics/icons';
+import { ContentfulRichText } from '@/components/contentfulRichText';
+import { replaceParagraphsWithDivs } from '@/components/contentfulRichText/contentfulRichTextOptions';
+import type { Scalars } from '@/lib/services/graphql';
+import type { PropsWithClassName } from '@/types';
+
+import styles from './formMessage.module.css';
+
+export type FormMessageType = 'error' | 'success' | 'info' | null;
+
+interface FormMessageProps extends PropsWithChildren, PropsWithClassName {
+  type?: FormMessageType;
+  iconProps?: IconProps;
+  header?: string | null;
+  message?: string | Scalars['JSON']['output'] | null;
 }
 
-const filteredHotels = hotels?.filter(hasValidCoordinates)
+export function FormMessage({
+  children,
+  iconProps,
+  header,
+  message,
+  type,
+  className,
+  ...props
+}: Readonly<FormMessageProps>) {
+  const content = children ?? renderMessage(message);
+  if (!content) return null;
+
+  const isInfo = type === 'info';
+
+  const formMessageClass = classNames(
+    styles.formMessage,
+    className,
+    'collapseWhenEmpty',
+    {
+      [styles.success]: type === 'success',
+      [styles.info]: isInfo,
+      [styles.error]: type === 'error'
+    }
+  );
+
+  const hideMessage =
+    message == null ||
+    (typeof message === 'string' && message.trim().length === 0);
+
+  return (
+    <div
+      className={formMessageClass}
+      role="alert"
+      aria-live="polite"
+      {...props}
+    >
+      <div className={classNames(styles.content)}>
+        {header ? (
+          // --- Layout: has header ---
+          // Stack: [icon + header] on top, [message] below
+          <div
+            className={classNames(
+              'stackTight',
+              styles.headerMessage,
+              { [styles.infoWrapper]: isInfo }  // overrides alignment to flex-start for info
+            )}
+          >
+            {/* Icon sits next to header text only (aligns to top of header) */}
+            <div
+              className={classNames('clusterTight', {
+                [styles.infoHeaderRow]: isInfo,   // flex-start alignment for multi-line
+                'clusterCenter': !isInfo          // centered alignment for non-info
+              })}
+            >
+              {iconProps && <Icon {...iconProps} className={styles.icon} />}
+              <h4 className={classNames('category', styles.headerText, {
+                [styles.infoHeaderText]: isInfo
+              })}>
+                {header}
+              </h4>
+            </div>
+
+            {!hideMessage && (
+              <div className="bodyText2">
+                {renderMessage(message, replaceParagraphsWithDivs)}
+              </div>
+            )}
+          </div>
+        ) : (
+          // --- Layout: standalone (no header, just message/children) ---
+          // Info: left-aligned, all caps
+          // Others: centered (existing behaviour)
+          <div
+            className={classNames(
+              'clusterTight',
+              styles.standaloneMessage,
+              {
+                [styles.infoStandalone]: isInfo,   // left-align, flex-start for multi-line
+                'clusterCenter': !isInfo            // centered for non-info
+              }
+            )}
+          >
+            {iconProps && <Icon {...iconProps} className={styles.icon} />}
+            <h4 className={classNames('category', styles.headerText, {
+              [styles.infoHeaderText]: isInfo
+            })}>
+              {content}
+            </h4>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function renderMessage(
+  message: FormMessageProps['message'],
+  options?: Options
+): string | ReactNode | undefined {
+  if (message && typeof message === 'object' && 'json' in message) {
+    return <ContentfulRichText json={message.json} options={options} />;
+  }
+
+  return message;
+}

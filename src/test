@@ -1,192 +1,123 @@
-import { BLOCKS } from '@contentful/rich-text-types';
-import type { Meta, StoryObj } from '@storybook/react';
+import { Options } from '@contentful/rich-text-react-renderer';
+import classNames from 'classnames';
+import { PropsWithChildren, type ReactNode } from 'react';
 
-import { IconProps } from '@/basics/icons';
-import {
-  createRichText,
-  createRichTextLinkNode,
-  createRichTextTextNode,
-  createRichTextTopLevelBlockNode,
-  mediumText
-} from '@/content';
+import { Icon, IconProps } from '@/basics/icons';
+import { ContentfulRichText } from '@/components/contentfulRichText';
+import { replaceParagraphsWithDivs } from '@/components/contentfulRichText/contentfulRichTextOptions';
+import type { Scalars } from '@/lib/services/graphql';
+import type { PropsWithClassName } from '@/types';
 
-import { FormMessage } from './formMessage';
+import styles from './formMessage.module.css';
 
-const meta = {
-  component: FormMessage
-} satisfies Meta<typeof FormMessage>;
+export type FormMessageType = 'error' | 'success' | 'info' | null;
 
-export default meta;
-type Story = StoryObj<typeof meta>;
+interface FormMessageProps extends PropsWithChildren, PropsWithClassName {
+  type?: FormMessageType;
+  iconProps?: IconProps;
+  header?: string | null;
+  message?: string | Scalars['JSON']['output'] | null;
+}
 
-// ----------------------------------------
-// Shared fixtures
-// ----------------------------------------
-const richTextContent = createRichText({
-  content: [
-    createRichTextTopLevelBlockNode({
-      nodeType: BLOCKS.PARAGRAPH,
-      content: [
-        createRichTextTextNode({
-          value: 'Please try again. If the problem persists, '
-        }),
-        createRichTextLinkNode({
-          text: 'Contact Customer Support',
-          uri: '/support'
-        })
-      ]
-    })
-  ]
-});
+export function FormMessage({
+  children,
+  iconProps,
+  header,
+  message,
+  type,
+  className,
+  ...props
+}: Readonly<FormMessageProps>) {
+  const content = children ?? renderMessage(message);
+  if (!content) return null;
 
-const longMessage =
-  'Please note that our Thalassotherapy Spa will remain closed for light refurbishments until 29 March 2025. We will be open on next April. We will see you then. Thank you.';
+  const isInfo = type === 'info';
 
-const shortMessage =
-  'Please note that our Thalassotherapy Spa will remain closed until 29 March 2025.';
+  const formMessageClass = classNames(
+    styles.formMessage,
+    className,
+    'collapseWhenEmpty',
+    {
+      [styles.success]: type === 'success',
+      [styles.info]: isInfo,
+      [styles.error]: type === 'error'
+    }
+  );
 
-const infoIconLarge: IconProps = { slug: 'warning', size: 'large' };
+  const hideMessage =
+    message == null ||
+    (typeof message === 'string' && message.trim().length === 0);
 
-// ----------------------------------------
-// Non-info types (unchanged behaviour)
-// ----------------------------------------
-export const Success: Story = {
-  args: {
-    children: 'Form success message.',
-    type: 'success'
+  return (
+    <div
+      className={formMessageClass}
+      role="alert"
+      aria-live="polite"
+      {...props}
+    >
+      <div className={classNames(styles.content)}>
+        {header ? (
+          // --- Layout: has header ---
+          // Stack: [icon + header] on top, [message] below
+          <div
+            className={classNames(
+              'stackTight',
+              styles.headerMessage,
+              { [styles.infoWrapper]: isInfo }  // overrides alignment to flex-start for info
+            )}
+          >
+            {/* Icon sits next to header text only (aligns to top of header) */}
+            <div
+              className={classNames('clusterTight', {
+                [styles.infoHeaderRow]: isInfo,   // flex-start alignment for multi-line
+                'clusterCenter': !isInfo          // centered alignment for non-info
+              })}
+            >
+              {iconProps && <Icon {...iconProps} className={styles.icon} />}
+              <h4 className={classNames('category', styles.headerText, {
+                [styles.infoHeaderText]: isInfo
+              })}>
+                {header}
+              </h4>
+            </div>
+
+            {!hideMessage && (
+              <div className="bodyText2">
+                {renderMessage(message, replaceParagraphsWithDivs)}
+              </div>
+            )}
+          </div>
+        ) : isInfo ? (
+          // --- Layout: info standalone ---
+          // Left-aligned, all caps, icon at top for multi-line
+          <div className={classNames(styles.infoStandalone)}>
+            {iconProps && <Icon {...iconProps} className={styles.icon} />}
+            <h4 className={classNames('category', styles.headerText, styles.infoHeaderText)}>
+              {content}
+            </h4>
+          </div>
+        ) : (
+          // --- Layout: non-info standalone (error/success) ---
+          // Centered. Icon stacks on top for multi-line via flex column.
+          <div className={classNames(styles.standaloneMessage)}>
+            {iconProps && <Icon {...iconProps} className={styles.iconStandalone} />}
+            <h4 className={classNames('category', styles.headerText)}>
+              {content}
+            </h4>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function renderMessage(
+  message: FormMessageProps['message'],
+  options?: Options
+): string | ReactNode | undefined {
+  if (message && typeof message === 'object' && 'json' in message) {
+    return <ContentfulRichText json={message.json} options={options} />;
   }
-};
 
-export const ErrorState: Story = {
-  args: {
-    children: 'Form error message.',
-    type: 'error'
-  }
-};
-
-export const ErrorWithRichText: Story = {
-  args: {
-    type: 'error',
-    message: richTextContent
-  }
-};
-
-export const ErrorWithIconAndRichText: Story = {
-  args: {
-    type: 'error',
-    iconProps: infoIconLarge,
-    message: richTextContent
-  }
-};
-
-// ----------------------------------------
-// Info — standalone (no header)
-// Requirement: left-aligned, all caps, 0.875rem
-// ----------------------------------------
-
-/** Single line: icon should optically align with the single line of text */
-export const InfoStandaloneSingleLine: Story = {
-  args: {
-    type: 'info',
-    iconProps: infoIconLarge,
-    message: shortMessage
-  }
-};
-
-/** Multi-line: icon should stay at the top (flex-start) */
-export const InfoStandaloneMultiLine: Story = {
-  args: {
-    type: 'info',
-    iconProps: infoIconLarge,
-    message: longMessage
-  }
-};
-
-/** No icon: just left-aligned all-caps text */
-export const InfoStandaloneNoIcon: Story = {
-  args: {
-    type: 'info',
-    message: shortMessage
-  }
-};
-
-/** Children instead of message prop */
-export const InfoStandaloneWithChildren: Story = {
-  args: {
-    type: 'info',
-    iconProps: infoIconLarge,
-    children: 'Form info message passed as children.'
-  }
-};
-
-// ----------------------------------------
-// Info — with header
-// Requirement: icon aligns with header text at top,
-// message below, left-aligned, all caps header
-// ----------------------------------------
-
-/** Short header, short message */
-export const InfoWithHeaderSingleLine: Story = {
-  args: {
-    type: 'info',
-    iconProps: infoIconLarge,
-    header: 'Baglioni Spa Renovation',
-    message: shortMessage
-  }
-};
-
-/** Long header that wraps: icon should stay at top (flex-start) */
-export const InfoWithHeaderMultiLine: Story = {
-  args: {
-    type: 'info',
-    iconProps: infoIconLarge,
-    header:
-      'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.',
-    message: richTextContent
-  }
-};
-
-/** Header with no message */
-export const InfoWithHeaderNoMessage: Story = {
-  args: {
-    type: 'info',
-    iconProps: infoIconLarge,
-    header: 'Baglioni Spa Renovation'
-  }
-};
-
-/** Header with rich text message */
-export const InfoWithHeaderAndRichText: Story = {
-  args: {
-    type: 'info',
-    iconProps: infoIconLarge,
-    header: 'Baglioni Spa Renovation',
-    message: richTextContent
-  }
-};
-
-/** Header with no icon */
-export const InfoWithHeaderNoIcon: Story = {
-  args: {
-    type: 'info',
-    header: 'Baglioni Spa Renovation',
-    message: shortMessage
-  }
-};
-
-// ----------------------------------------
-// Edge cases
-// ----------------------------------------
-
-/** Empty — should render nothing */
-export const Empty: Story = {
-  args: {}
-};
-
-/** Non-info with long text (should stay centered) */
-export const SuccessWithLongText: Story = {
-  args: {
-    type: 'success',
-    children: mediumText
-  }
-};
+  return message;
+}

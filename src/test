@@ -1,122 +1,192 @@
-@layer basic {
-  .formMessage {
-    container-type: inline-size;
-    margin-block: 0;
+import { BLOCKS } from '@contentful/rich-text-types';
+import type { Meta, StoryObj } from '@storybook/react';
+
+import { IconProps } from '@/basics/icons';
+import {
+  createRichText,
+  createRichTextLinkNode,
+  createRichTextTextNode,
+  createRichTextTopLevelBlockNode,
+  mediumText
+} from '@/content';
+
+import { FormMessage } from './formMessage';
+
+const meta = {
+  component: FormMessage
+} satisfies Meta<typeof FormMessage>;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+// ----------------------------------------
+// Shared fixtures
+// ----------------------------------------
+const richTextContent = createRichText({
+  content: [
+    createRichTextTopLevelBlockNode({
+      nodeType: BLOCKS.PARAGRAPH,
+      content: [
+        createRichTextTextNode({
+          value: 'Please try again. If the problem persists, '
+        }),
+        createRichTextLinkNode({
+          text: 'Contact Customer Support',
+          uri: '/support'
+        })
+      ]
+    })
+  ]
+});
+
+const longMessage =
+  'Please note that our Thalassotherapy Spa will remain closed for light refurbishments until 29 March 2025. We will be open on next April. We will see you then. Thank you.';
+
+const shortMessage =
+  'Please note that our Thalassotherapy Spa will remain closed until 29 March 2025.';
+
+const infoIconLarge: IconProps = { slug: 'warning', size: 'large' };
+
+// ----------------------------------------
+// Non-info types (unchanged behaviour)
+// ----------------------------------------
+export const Success: Story = {
+  args: {
+    children: 'Form success message.',
+    type: 'success'
   }
+};
 
-  .success {
-    color: var(--color-sustainability-green);
-    background-color: rgb(from var(--color-sustainability-green) r g b / 20%);
+export const ErrorState: Story = {
+  args: {
+    children: 'Form error message.',
+    type: 'error'
   }
+};
 
-  .error {
-    color: var(--color-error);
-    background-color: rgb(from var(--color-coral-light) r g b / 20%);
-
-    & a {
-      --color: var(--color-error);
-      --color-hover: var(--color);
-    }
+export const ErrorWithRichText: Story = {
+  args: {
+    type: 'error',
+    message: richTextContent
   }
+};
 
-  .info {
-    color: var(--color-slate);
-    background-color: var(--color-powder-blue);
+export const ErrorWithIconAndRichText: Story = {
+  args: {
+    type: 'error',
+    iconProps: infoIconLarge,
+    message: richTextContent
   }
+};
 
-  .content {
-    --font-size-body: 0.875rem;
+// ----------------------------------------
+// Info — standalone (no header)
+// Requirement: left-aligned, all caps, 0.875rem
+// ----------------------------------------
 
-    display: block;
-    padding: var(--spacing-vertical-small) 1.75rem;
-    font-family: var(--font-family-secondary);
-    font-size: var(--font-size-body);
+/** Single line: icon should optically align with the single line of text */
+export const InfoStandaloneSingleLine: Story = {
+  args: {
+    type: 'info',
+    iconProps: infoIconLarge,
+    message: shortMessage
   }
+};
 
-  /* ----------------------------------------
-   * Header row (icon + header text side by side)
-   * Default: centered (error/success)
-   * ---------------------------------------- */
-  .headerMessage {
-    justify-content: center;
-    text-align: center;
+/** Multi-line: icon should stay at the top (flex-start) */
+export const InfoStandaloneMultiLine: Story = {
+  args: {
+    type: 'info',
+    iconProps: infoIconLarge,
+    message: longMessage
   }
+};
 
-  /* ----------------------------------------
-   * Info type: override stack to left-align
-   * ---------------------------------------- */
-  .infoWrapper {
-    --alignment: flex-start;  /* overrides stack utility class alignment */
-    text-align: left;
+/** No icon: just left-aligned all-caps text */
+export const InfoStandaloneNoIcon: Story = {
+  args: {
+    type: 'info',
+    message: shortMessage
   }
+};
 
-  /* ----------------------------------------
-   * Info header row: icon aligns to TOP of
-   * text for multi-line, centers for single-line
-   * via align-items: flex-start + line-height trick
-   * ---------------------------------------- */
-  .infoHeaderRow {
-    display: flex;
-    flex-wrap: nowrap;
-    align-items: flex-start;  /* icon stays at top for multi-line */
-    gap: var(--spacing-tight, 0.5rem);
+/** Children instead of message prop */
+export const InfoStandaloneWithChildren: Story = {
+  args: {
+    type: 'info',
+    iconProps: infoIconLarge,
+    children: 'Form info message passed as children.'
   }
+};
 
-  /* ----------------------------------------
-   * Info standalone (no header): left-aligned,
-   * all caps. Same flex-start icon alignment.
-   * ---------------------------------------- */
-  .infoStandalone {
-    display: flex;
-    flex-wrap: nowrap;
-    align-items: flex-start;
-    justify-content: flex-start;
-    text-align: left;
-  }
+// ----------------------------------------
+// Info — with header
+// Requirement: icon aligns with header text at top,
+// message below, left-aligned, all caps header
+// ----------------------------------------
 
-  /* ----------------------------------------
-   * Header text
-   * ---------------------------------------- */
-  .headerText {
-    font-size: 0.875rem;
-    /* line-height matches icon size so icon optically aligns
-       with the first line of text for both single and multi-line */
-    line-height: 1.4375rem;
+/** Short header, short message */
+export const InfoWithHeaderSingleLine: Story = {
+  args: {
+    type: 'info',
+    iconProps: infoIconLarge,
+    header: 'Baglioni Spa Renovation',
+    message: shortMessage
   }
+};
 
-  /* Info-specific text overrides */
-  .infoHeaderText {
-    font-size: 0.875rem;
-    text-transform: uppercase;
-    letter-spacing: 0.125rem;
-    line-height: 1.4375rem; /* must match icon --size so first line aligns */
+/** Long header that wraps: icon should stay at top (flex-start) */
+export const InfoWithHeaderMultiLine: Story = {
+  args: {
+    type: 'info',
+    iconProps: infoIconLarge,
+    header:
+      'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.',
+    message: richTextContent
   }
+};
 
-  /* ----------------------------------------
-   * Icon
-   * flex-shrink: 0 prevents icon from squishing
-   * in narrow containers
-   * ---------------------------------------- */
-  .icon {
-    --size: 1.4375rem;
-    flex-shrink: 0;
-    /* No margin-top needed: line-height on the text
-       matches icon height, so flex-start aligns them perfectly */
+/** Header with no message */
+export const InfoWithHeaderNoMessage: Story = {
+  args: {
+    type: 'info',
+    iconProps: infoIconLarge,
+    header: 'Baglioni Spa Renovation'
   }
+};
 
-  /* ----------------------------------------
-   * Standalone message (error/success, no header)
-   * ---------------------------------------- */
-  .standaloneMessage {
-    letter-spacing: 0.125rem;
-    text-align: center;
-    text-transform: uppercase;
-    font-weight: var(--font-weight-bold);
+/** Header with rich text message */
+export const InfoWithHeaderAndRichText: Story = {
+  args: {
+    type: 'info',
+    iconProps: infoIconLarge,
+    header: 'Baglioni Spa Renovation',
+    message: richTextContent
   }
+};
 
-  @container (min-width: 30rem) {
-    .content {
-      padding: 1.5rem 2.1875rem;
-    }
+/** Header with no icon */
+export const InfoWithHeaderNoIcon: Story = {
+  args: {
+    type: 'info',
+    header: 'Baglioni Spa Renovation',
+    message: shortMessage
   }
-}
+};
+
+// ----------------------------------------
+// Edge cases
+// ----------------------------------------
+
+/** Empty — should render nothing */
+export const Empty: Story = {
+  args: {}
+};
+
+/** Non-info with long text (should stay centered) */
+export const SuccessWithLongText: Story = {
+  args: {
+    type: 'success',
+    children: mediumText
+  }
+};

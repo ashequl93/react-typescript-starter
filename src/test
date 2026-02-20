@@ -7,6 +7,7 @@ import contentful from 'contentful-management';
  * - Finds page entries whose slug matches SLUGS_TO_UPDATE (en-US).
  * - Creates a new entry that copies all fields (including references).
  * - Sets the new entry's slug to the mapped advisor slug.
+ * - Ensures internalName stays unique by appending a suffix.
  * - Optionally publishes the new entry.
  * - Optionally unpublishes the original entry.
  *
@@ -81,6 +82,20 @@ function deepClone(obj) {
   return JSON.parse(JSON.stringify(obj));
 }
 
+function ensureUniqueInternalName(fields, locale, suffix) {
+  // internalName is validated as unique in this space.
+  if (!fields.internalName) fields.internalName = {};
+  const current = fields.internalName[locale];
+
+  // If internalName isn't set, skip (avoid introducing a new required field unexpectedly)
+  if (!current) return;
+
+  // Avoid stacking suffix if script is re-run
+  if (typeof current === 'string' && current.includes(suffix)) return;
+
+  fields.internalName[locale] = `${current} ${suffix}`;
+}
+
 async function findEntryBySlug(env, slugValue) {
   const resp = await env.getEntries({
     content_type: CONTENT_TYPE_ID,
@@ -151,19 +166,33 @@ async function main() {
       }
 
       if (isDryRun) {
-        console.log('DRY_RUN: would create copy with new slug');
+        console.log('DRY_RUN: would create copy with new slug + unique internalName');
         if (shouldPublishNew) console.log('DRY_RUN: would publish new entry');
         if (shouldUnpublishOld) console.log('DRY_RUN: would unpublish old entry');
         createdCount++;
         continue;
       }
 
-      // Create the copy with the final slug immediately (no need for temp slug here).
       const newFields = deepClone(entry.fields);
+
+      // Ensure unique constraints are satisfied on the copy
+      ensureUniqueInternalName(newFields, LOCALE, '(Advisor Copy)');
+
+      // Assign the new slug
       if (!newFields[SLUG_FIELD_ID]) newFields[SLUG_FIELD_ID] = {};
       newFields[SLUG_FIELD_ID][LOCALE] = newSlug;
 
-      const created = await env.createEntry(CONTENT_TYPE_ID, { fields: newFields });
+      let created;
+      try {
+        created = await env.createEntry(CONTENT_TYPE_ID, { fields: newFields });
+      } catch (e) {
+        console.error('CREATE FAILED:', entry.sys.id, '->', newSlug);
+        console.error('Error name:', e?.name);
+        console.error('Error message:', e?.message);
+        console.error('Error details:', JSON.stringify(e?.details, null, 2));
+        throw e;
+      }
+
       createdCount++;
       console.log('CREATED:', created.sys.id);
 

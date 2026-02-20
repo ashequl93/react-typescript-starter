@@ -1,228 +1,324 @@
-import { BLOCKS } from '@contentful/rich-text-types';
-import type { Meta, StoryObj } from '@storybook/react';
+import contentful from 'contentful-management';
 
-import { IconProps } from '@/basics/icons';
-import {
-  createRichText,
-  createRichTextLinkNode,
-  createRichTextTextNode,
-  createRichTextTopLevelBlockNode,
-  mediumText
-} from '@/content';
+/**
+ * TWO-STEP SAFE MIGRATION (QA/PROD-ready)
+ *
+ * Step 1 (CREATE): Create copies of TA-only pages (identified by SLUGS_TO_UPDATE).
+ *                  Copies are created with a TEMP slug (unique) so we can safely create first.
+ *
+ * Step 2 (UPDATE): Update the newly created copies to the final new slug (toAdvisorSlug),
+ *                  then optionally publish them. Optionally unpublish the originals.
+ *
+ * ENV required:
+ *  - CONTENTFUL_MANAGEMENT_TOKEN
+ *  - CONTENTFUL_SPACE_ID
+ *  - CONTENTFUL_ENVIRONMENT_ID (ex: "master", "qa", "prod")
+ *
+ * Optional:
+ *  - CONTENTFUL_LOCALE (ex: "en-US") to target only one locale (default: all locales)
+ *  - DRY_RUN ("true" | "false") default true
+ *  - PUBLISH ("true" | "false") default false
+ *  - UNPUBLISH_OLD ("true" | "false") default false
+ *  - RUN_CREATE ("true" | "false") default true   (set false to skip create step)
+ *  - RUN_UPDATE ("true" | "false") default true   (set false to skip update step)
+ *
+ * Notes:
+ *  - Slugs are NOT localized in your space (per you), but your script supports locales.
+ *    We will set slug only in the target locale(s). If CONTENTFUL_LOCALE is set, only that locale is touched.
+ *  - References inside the page fields will be copied exactly (links to other entries/assets).
+ *  - Idempotency: if an entry already exists with the FINAL new slug, we skip creating a copy for that old slug.
+ */
 
-import { FormMessage } from './formMessage';
+const {
+  CONTENTFUL_MANAGEMENT_TOKEN,
+  CONTENTFUL_SPACE_ID,
+  CONTENTFUL_ENVIRONMENT_ID,
+  CONTENTFUL_LOCALE,
+  DRY_RUN = 'true',
+  PUBLISH = 'false',
+  UNPUBLISH_OLD = 'false',
+  RUN_CREATE = 'true',
+  RUN_UPDATE = 'true',
+} = process.env;
 
-const meta = {
-  component: FormMessage
-} satisfies Meta<typeof FormMessage>;
+if (!CONTENTFUL_MANAGEMENT_TOKEN || !CONTENTFUL_SPACE_ID || !CONTENTFUL_ENVIRONMENT_ID) {
+  console.error(
+    'Missing env vars. Need CONTENTFUL_MANAGEMENT_TOKEN, CONTENTFUL_SPACE_ID, CONTENTFUL_ENVIRONMENT_ID'
+  );
+  process.exit(1);
+}
 
-export default meta;
-type Story = StoryObj<typeof meta>;
+const isDryRun = DRY_RUN !== 'false';
+const shouldPublish = PUBLISH === 'true';
+const shouldUnpublishOld = UNPUBLISH_OLD === 'true';
+const shouldRunCreate = RUN_CREATE !== 'false';
+const shouldRunUpdate = RUN_UPDATE !== 'false';
 
-// ----------------------------------------
-// Shared fixtures
-// ----------------------------------------
-const richTextContent = createRichText({
-  content: [
-    createRichTextTopLevelBlockNode({
-      nodeType: BLOCKS.PARAGRAPH,
-      content: [
-        createRichTextTextNode({
-          value: 'Please try again. If the problem persists, '
-        }),
-        createRichTextLinkNode({
-          text: 'Contact Customer Support',
-          uri: '/support'
-        })
-      ]
-    })
-  ]
+const CONTENT_TYPE_ID = 'page'; // <-- content type id
+const SLUG_FIELD_ID = 'slug'; // <-- slug field id
+
+const SLUGS_TO_UPDATE = new Set([
+  '/login',
+  '/register',
+  '/forgot-password',
+  '/lan-bookings',
+  '/profile',
+  '/about-lan',
+]);
+
+function toAdvisorSlug(oldSlug) {
+  switch (oldSlug) {
+    case '/login':
+      return '/advisor-login';
+    case '/forgot-password':
+      return '/advisor-forgot-password';
+    case '/register':
+      return '/advisor-register';
+    case '/lan-bookings':
+      return '/advisor/lan-bookings';
+    case '/profile':
+      return '/advisor/profile';
+    case '/about-lan':
+      return '/advisor/about-lan';
+    default:
+      return oldSlug;
+  }
+}
+
+function deepClone(obj) {
+  return JSON.parse(JSON.stringify(obj));
+}
+
+function uniqueTempSlug(finalSlug) {
+  // Must be unique in the environment. Keep it readable for debugging.
+  // Example: /advisor-login--tmp-1700000000000-4821
+  const ts = Date.now();
+  const rand = Math.floor(Math.random() * 10000);
+  return `${finalSlug}--tmp-${ts}-${rand}`;
+}
+
+async function findEntryBySlug(env, slugValue, locale) {
+  const resp = await env.getEntries({
+    content_type: CONTENT_TYPE_ID,
+    [`fields.${SLUG_FIELD_ID}`]: slugValue,
+    locale,
+    limit: 2,
+  });
+  return resp.items?.[0] ?? null;
+}
+
+async function main() {
+  const client = contentful.createClient({
+    accessToken: CONTENTFUL_MANAGEMENT_TOKEN,
+  });
+
+  const space = await client.getSpace(CONTENTFUL_SPACE_ID);
+  const env = await space.getEnvironment(CONTENTFUL_ENVIRONMENT_ID);
+
+  // Get locale list so we can safely work across locales if needed
+  const localesResp = await env.getLocales();
+  const locales = localesResp.items.map((l) => l.code);
+  const targetLocales = CONTENTFUL_LOCALE ? [CONTENTFUL_LOCALE] : locales;
+
+  // Pick a "search locale" for slug lookups. Usually default locale is safest.
+  // If CONTENTFUL_LOCALE is provided, use it for searches; else use first locale.
+  const searchLocale = CONTENTFUL_LOCALE || localesResp.items.find((l) => l.default)?.code || locales[0];
+
+  console.log('Environment:', CONTENTFUL_ENVIRONMENT_ID);
+  console.log('Locales:', targetLocales.join(', '));
+  console.log('Search locale:', searchLocale);
+  console.log('Dry run:', isDryRun);
+  console.log('Publish new:', shouldPublish);
+  console.log('Unpublish old:', shouldUnpublishOld);
+  console.log('Run create step:', shouldRunCreate);
+  console.log('Run update step:', shouldRunUpdate);
+
+  // Step results we keep in memory so Step 2 knows what Step 1 created.
+  // Each item: { oldEntryId, oldSlug, newSlug, tempSlug, newEntryId }
+  const createdCopies = [];
+
+  // Pull entries in pages of 100 (same as your original)
+  let skip = 0;
+  const limit = 100;
+  let examinedCount = 0;
+  let matchedCount = 0;
+
+  while (true) {
+    const entries = await env.getEntries({
+      content_type: CONTENT_TYPE_ID,
+      limit,
+      skip,
+    });
+
+    if (!entries.items.length) break;
+
+    for (const entry of entries.items) {
+      examinedCount++;
+
+      const fields = entry.fields || {};
+      const slugField = fields[SLUG_FIELD_ID];
+      if (!slugField) continue;
+
+      // Find a current slug in any target locale that matches our list.
+      // (Even though slugs aren't localized, this keeps your structure.)
+      let matchedLocale = null;
+      let oldSlug = null;
+
+      for (const locale of targetLocales) {
+        const currentSlug = slugField?.[locale];
+        if (!currentSlug) continue;
+        if (SLUGS_TO_UPDATE.has(currentSlug)) {
+          matchedLocale = locale;
+          oldSlug = currentSlug;
+          break;
+        }
+      }
+
+      if (!oldSlug) continue;
+
+      const newSlug = toAdvisorSlug(oldSlug);
+      if (newSlug === oldSlug) continue;
+
+      matchedCount++;
+
+      console.log('\nEntry:', entry.sys.id);
+      console.log('Old slug:', oldSlug);
+      console.log('New slug:', newSlug);
+
+      // Idempotency: if final new slug already exists, skip.
+      // This prevents duplicates if script is re-run.
+      const existingFinal = await findEntryBySlug(env, newSlug, searchLocale);
+      if (existingFinal) {
+        console.log(`SKIP: final slug already exists (${newSlug}) -> entry ${existingFinal.sys.id}`);
+        continue;
+      }
+
+      // =========================
+      // STEP 1: CREATE COPY
+      // =========================
+      if (shouldRunCreate) {
+        const tempSlug = uniqueTempSlug(newSlug);
+        console.log('Temp slug:', tempSlug);
+
+        if (isDryRun) {
+          console.log('DRY_RUN: would create copy entry with temp slug');
+          createdCopies.push({
+            oldEntryId: entry.sys.id,
+            oldSlug,
+            newSlug,
+            tempSlug,
+            newEntryId: 'DRY_RUN',
+            matchedLocale,
+          });
+        } else {
+          const newFields = deepClone(entry.fields);
+
+          // Set temp slug only in the locale we're targeting (or all targetLocales if you want).
+          // Since slugs are not localized, setting on the matchedLocale (or searchLocale) is safest.
+          const slugLocaleToWrite = matchedLocale || searchLocale;
+
+          if (!newFields[SLUG_FIELD_ID]) newFields[SLUG_FIELD_ID] = {};
+          newFields[SLUG_FIELD_ID][slugLocaleToWrite] = tempSlug;
+
+          const created = await env.createEntry(CONTENT_TYPE_ID, { fields: newFields });
+
+          console.log('CREATED COPY:', created.sys.id);
+
+          createdCopies.push({
+            oldEntryId: entry.sys.id,
+            oldSlug,
+            newSlug,
+            tempSlug,
+            newEntryId: created.sys.id,
+            matchedLocale: slugLocaleToWrite,
+          });
+        }
+      }
+    }
+
+    skip += entries.items.length;
+    if (skip >= entries.total) break;
+  }
+
+  console.log('\nScan done.');
+  console.log('Examined:', examinedCount);
+  console.log('Matched:', matchedCount);
+  console.log('Copies to process:', createdCopies.length);
+
+  // =========================
+  // STEP 2: UPDATE COPIES
+  // =========================
+  if (!shouldRunUpdate) {
+    console.log('\nUpdate step skipped (RUN_UPDATE=false).');
+    return;
+  }
+
+  if (!createdCopies.length) {
+    console.log('\nNo copies created/found to update.');
+    return;
+  }
+
+  let updatedCount = 0;
+  let publishedCount = 0;
+  let unpublishedOldCount = 0;
+
+  for (const item of createdCopies) {
+    const { oldEntryId, newEntryId, newSlug, tempSlug, matchedLocale } = item;
+
+    console.log('\nUpdating copy:', newEntryId);
+    console.log('Temp slug:', tempSlug);
+    console.log('Final slug:', newSlug);
+
+    if (isDryRun) {
+      console.log('DRY_RUN: would set final slug on the copied entry');
+      if (shouldPublish) console.log('DRY_RUN: would publish copied entry');
+      if (shouldUnpublishOld) console.log('DRY_RUN: would unpublish old entry');
+      updatedCount++;
+      continue;
+    }
+
+    // Fetch the newly created entry
+    const copiedEntry = await env.getEntry(newEntryId);
+
+    // Idempotency: if copied entry already has final slug, skip slug update
+    const currentSlug = copiedEntry.fields?.[SLUG_FIELD_ID]?.[matchedLocale];
+    if (currentSlug === newSlug) {
+      console.log('SKIP: copied entry already has final slug');
+    } else {
+      if (!copiedEntry.fields[SLUG_FIELD_ID]) copiedEntry.fields[SLUG_FIELD_ID] = {};
+      copiedEntry.fields[SLUG_FIELD_ID][matchedLocale] = newSlug;
+
+      const updated = await copiedEntry.update();
+      console.log('UPDATED COPY:', updated.sys.id);
+      updatedCount++;
+
+      if (shouldPublish) {
+        await updated.publish();
+        console.log('PUBLISHED COPY:', updated.sys.id);
+        publishedCount++;
+      }
+    }
+
+    // Optionally unpublish old entry
+    if (shouldUnpublishOld) {
+      const oldEntry = await env.getEntry(oldEntryId);
+      if (oldEntry.sys.publishedVersion) {
+        await oldEntry.unpublish();
+        console.log('UNPUBLISHED OLD:', oldEntry.sys.id);
+        unpublishedOldCount++;
+      } else {
+        console.log('OLD NOT PUBLISHED: skip unpublish');
+      }
+    }
+  }
+
+  console.log('\nDone.');
+  console.log('Copies updated:', updatedCount);
+  console.log('Copies published:', publishedCount);
+  console.log('Old entries unpublished:', unpublishedOldCount);
+}
+
+main().catch((e) => {
+  console.error('Error:', e);
+  process.exit(1);
 });
-
-const shortMessage =
-  'Please note that our Thalassotherapy Spa will remain closed until 29 March 2025.';
-
-const longMessage =
-  'Please note that our Thalassotherapy Spa will remain closed for light refurbishments until 29 March 2025. We will be open on next April. We will see you then. Thank you.';
-
-const infoIconLarge: IconProps = { slug: 'warning', size: 'large' };
-
-// ----------------------------------------
-// Success — centered, all caps
-// ----------------------------------------
-
-/** Single line: icon + text should be centered in a row */
-export const SuccessSingleLine: Story = {
-  args: {
-    type: 'success',
-    iconProps: infoIconLarge,
-    children: 'Form submitted successfully.'
-  }
-};
-
-/**
- * Multi-line: icon should stack ABOVE text (column layout),
- * text stays centered below icon
- */
-export const SuccessMultiLine: Story = {
-  args: {
-    type: 'success',
-    iconProps: infoIconLarge,
-    children: mediumText
-  }
-};
-
-/** No icon: just centered text */
-export const SuccessNoIcon: Story = {
-  args: {
-    type: 'success',
-    children: 'Form submitted successfully.'
-  }
-};
-
-// ----------------------------------------
-// Error — centered, all caps (same layout as success)
-// ----------------------------------------
-
-/** Single line error with icon */
-export const ErrorSingleLine: Story = {
-  args: {
-    type: 'error',
-    iconProps: infoIconLarge,
-    children: 'Something went wrong. Please try again.'
-  }
-};
-
-/**
- * Multi-line: icon stacks above centered text
- */
-export const ErrorMultiLine: Story = {
-  args: {
-    type: 'error',
-    iconProps: infoIconLarge,
-    message: longMessage
-  }
-};
-
-/** Error with rich text — no icon */
-export const ErrorWithRichText: Story = {
-  args: {
-    type: 'error',
-    message: richTextContent
-  }
-};
-
-/** Error with rich text + icon */
-export const ErrorWithIconAndRichText: Story = {
-  args: {
-    type: 'error',
-    iconProps: infoIconLarge,
-    message: richTextContent
-  }
-};
-
-// ----------------------------------------
-// Info standalone (no header)
-// Left-aligned, all caps, icon at top for multi-line
-// ----------------------------------------
-
-/** Single line: icon optically aligns with the single line of text */
-export const InfoStandaloneSingleLine: Story = {
-  args: {
-    type: 'info',
-    iconProps: infoIconLarge,
-    message: shortMessage
-  }
-};
-
-/** Multi-line: icon stays at top (flex-start), text left-aligns */
-export const InfoStandaloneMultiLine: Story = {
-  args: {
-    type: 'info',
-    iconProps: infoIconLarge,
-    message: longMessage
-  }
-};
-
-/** No icon: just left-aligned all-caps text */
-export const InfoStandaloneNoIcon: Story = {
-  args: {
-    type: 'info',
-    message: shortMessage
-  }
-};
-
-/** Children prop instead of message */
-export const InfoStandaloneWithChildren: Story = {
-  args: {
-    type: 'info',
-    iconProps: infoIconLarge,
-    children: 'Form info message passed as children.'
-  }
-};
-
-// ----------------------------------------
-// Info with header
-// Icon aligns with header text at top, message below, left-aligned
-// ----------------------------------------
-
-/** Short header + short message: icon aligns with header first line */
-export const InfoWithHeaderSingleLine: Story = {
-  args: {
-    type: 'info',
-    iconProps: infoIconLarge,
-    header: 'Baglioni Spa Renovation',
-    message: shortMessage
-  }
-};
-
-/**
- * Long header that wraps: icon stays at top of header (flex-start),
- * NOT centered across all lines
- */
-export const InfoWithHeaderMultiLine: Story = {
-  args: {
-    type: 'info',
-    iconProps: infoIconLarge,
-    header:
-      'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.',
-    message: richTextContent
-  }
-};
-
-/** Header only, no message */
-export const InfoWithHeaderNoMessage: Story = {
-  args: {
-    type: 'info',
-    iconProps: infoIconLarge,
-    header: 'Baglioni Spa Renovation'
-  }
-};
-
-/** Header + rich text message */
-export const InfoWithHeaderAndRichText: Story = {
-  args: {
-    type: 'info',
-    iconProps: infoIconLarge,
-    header: 'Baglioni Spa Renovation',
-    message: richTextContent
-  }
-};
-
-/** Header with no icon */
-export const InfoWithHeaderNoIcon: Story = {
-  args: {
-    type: 'info',
-    header: 'Baglioni Spa Renovation',
-    message: shortMessage
-  }
-};
-
-// ----------------------------------------
-// Edge cases
-// ----------------------------------------
-
-/** Should render nothing */
-export const Empty: Story = {
-  args: {}
-};

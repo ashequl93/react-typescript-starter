@@ -1,44 +1,37 @@
 import contentful from 'contentful-management';
 
 /**
- * TWO-STEP SAFE MIGRATION (QA/PROD-ready)
+ * Create advisor versions of TA-only pages by copying existing entries and assigning new slugs.
  *
- * Step 1 (CREATE): Create copies of TA-only pages (identified by SLUGS_TO_UPDATE).
- *                  Copies are created with a TEMP slug (unique) so we can safely create first.
+ * Behavior:
+ * - Finds page entries whose slug matches SLUGS_TO_UPDATE (en-US).
+ * - Creates a new entry that copies all fields (including references).
+ * - Sets the new entry's slug to the mapped advisor slug.
+ * - Optionally publishes the new entry.
+ * - Optionally unpublishes the original entry.
  *
- * Step 2 (UPDATE): Update the newly created copies to the final new slug (toAdvisorSlug),
- *                  then optionally publish them. Optionally unpublish the originals.
+ * Required env:
+ * - CONTENTFUL_MANAGEMENT_TOKEN
+ * - CONTENTFUL_SPACE_ID
+ * - CONTENTFUL_ENVIRONMENT_ID (ex: "qa", "master", "prod")
  *
- * ENV required:
- *  - CONTENTFUL_MANAGEMENT_TOKEN
- *  - CONTENTFUL_SPACE_ID
- *  - CONTENTFUL_ENVIRONMENT_ID (ex: "master", "qa", "prod")
- *
- * Optional:
- *  - CONTENTFUL_LOCALE (ex: "en-US") to target only one locale (default: all locales)
- *  - DRY_RUN ("true" | "false") default true
- *  - PUBLISH ("true" | "false") default false
- *  - UNPUBLISH_OLD ("true" | "false") default false
- *  - RUN_CREATE ("true" | "false") default true   (set false to skip create step)
- *  - RUN_UPDATE ("true" | "false") default true   (set false to skip update step)
+ * Optional env:
+ * - DRY_RUN ("true" | "false") default true
+ * - PUBLISH_NEW ("true" | "false") default false
+ * - UNPUBLISH_OLD ("true" | "false") default false
  *
  * Notes:
- *  - Slugs are NOT localized in your space (per you), but your script supports locales.
- *    We will set slug only in the target locale(s). If CONTENTFUL_LOCALE is set, only that locale is touched.
- *  - References inside the page fields will be copied exactly (links to other entries/assets).
- *  - Idempotency: if an entry already exists with the FINAL new slug, we skip creating a copy for that old slug.
+ * - Slugs are treated as non-localized; en-US is used.
+ * - Idempotent: if an entry already exists with the target advisor slug, creation is skipped.
  */
 
 const {
   CONTENTFUL_MANAGEMENT_TOKEN,
   CONTENTFUL_SPACE_ID,
   CONTENTFUL_ENVIRONMENT_ID,
-  CONTENTFUL_LOCALE,
   DRY_RUN = 'true',
-  PUBLISH = 'false',
+  PUBLISH_NEW = 'false',
   UNPUBLISH_OLD = 'false',
-  RUN_CREATE = 'true',
-  RUN_UPDATE = 'true',
 } = process.env;
 
 if (!CONTENTFUL_MANAGEMENT_TOKEN || !CONTENTFUL_SPACE_ID || !CONTENTFUL_ENVIRONMENT_ID) {
@@ -49,13 +42,12 @@ if (!CONTENTFUL_MANAGEMENT_TOKEN || !CONTENTFUL_SPACE_ID || !CONTENTFUL_ENVIRONM
 }
 
 const isDryRun = DRY_RUN !== 'false';
-const shouldPublish = PUBLISH === 'true';
+const shouldPublishNew = PUBLISH_NEW === 'true';
 const shouldUnpublishOld = UNPUBLISH_OLD === 'true';
-const shouldRunCreate = RUN_CREATE !== 'false';
-const shouldRunUpdate = RUN_UPDATE !== 'false';
 
-const CONTENT_TYPE_ID = 'page'; // <-- content type id
-const SLUG_FIELD_ID = 'slug'; // <-- slug field id
+const CONTENT_TYPE_ID = 'page';
+const SLUG_FIELD_ID = 'slug';
+const LOCALE = 'en-US';
 
 const SLUGS_TO_UPDATE = new Set([
   '/login',
@@ -89,19 +81,11 @@ function deepClone(obj) {
   return JSON.parse(JSON.stringify(obj));
 }
 
-function uniqueTempSlug(finalSlug) {
-  // Must be unique in the environment. Keep it readable for debugging.
-  // Example: /advisor-login--tmp-1700000000000-4821
-  const ts = Date.now();
-  const rand = Math.floor(Math.random() * 10000);
-  return `${finalSlug}--tmp-${ts}-${rand}`;
-}
-
-async function findEntryBySlug(env, slugValue, locale) {
+async function findEntryBySlug(env, slugValue) {
   const resp = await env.getEntries({
     content_type: CONTENT_TYPE_ID,
     [`fields.${SLUG_FIELD_ID}`]: slugValue,
-    locale,
+    locale: LOCALE,
     limit: 2,
   });
   return resp.items?.[0] ?? null;
@@ -115,33 +99,21 @@ async function main() {
   const space = await client.getSpace(CONTENTFUL_SPACE_ID);
   const env = await space.getEnvironment(CONTENTFUL_ENVIRONMENT_ID);
 
-  // Get locale list so we can safely work across locales if needed
-  const localesResp = await env.getLocales();
-  const locales = localesResp.items.map((l) => l.code);
-  const targetLocales = CONTENTFUL_LOCALE ? [CONTENTFUL_LOCALE] : locales;
-
-  // Pick a "search locale" for slug lookups. Usually default locale is safest.
-  // If CONTENTFUL_LOCALE is provided, use it for searches; else use first locale.
-  const searchLocale = CONTENTFUL_LOCALE || localesResp.items.find((l) => l.default)?.code || locales[0];
-
   console.log('Environment:', CONTENTFUL_ENVIRONMENT_ID);
-  console.log('Locales:', targetLocales.join(', '));
-  console.log('Search locale:', searchLocale);
+  console.log('Locale:', LOCALE);
   console.log('Dry run:', isDryRun);
-  console.log('Publish new:', shouldPublish);
+  console.log('Publish new:', shouldPublishNew);
   console.log('Unpublish old:', shouldUnpublishOld);
-  console.log('Run create step:', shouldRunCreate);
-  console.log('Run update step:', shouldRunUpdate);
 
-  // Step results we keep in memory so Step 2 knows what Step 1 created.
-  // Each item: { oldEntryId, oldSlug, newSlug, tempSlug, newEntryId }
-  const createdCopies = [];
-
-  // Pull entries in pages of 100 (same as your original)
   let skip = 0;
   const limit = 100;
+
   let examinedCount = 0;
   let matchedCount = 0;
+  let createdCount = 0;
+  let publishedCount = 0;
+  let unpublishedOldCount = 0;
+  let skippedBecauseExists = 0;
 
   while (true) {
     const entries = await env.getEntries({
@@ -156,82 +128,58 @@ async function main() {
       examinedCount++;
 
       const fields = entry.fields || {};
-      const slugField = fields[SLUG_FIELD_ID];
-      if (!slugField) continue;
+      const slugValue = fields?.[SLUG_FIELD_ID]?.[LOCALE];
+      if (!slugValue) continue;
 
-      // Find a current slug in any target locale that matches our list.
-      // (Even though slugs aren't localized, this keeps your structure.)
-      let matchedLocale = null;
-      let oldSlug = null;
+      if (!SLUGS_TO_UPDATE.has(slugValue)) continue;
 
-      for (const locale of targetLocales) {
-        const currentSlug = slugField?.[locale];
-        if (!currentSlug) continue;
-        if (SLUGS_TO_UPDATE.has(currentSlug)) {
-          matchedLocale = locale;
-          oldSlug = currentSlug;
-          break;
-        }
-      }
-
-      if (!oldSlug) continue;
-
-      const newSlug = toAdvisorSlug(oldSlug);
-      if (newSlug === oldSlug) continue;
+      const newSlug = toAdvisorSlug(slugValue);
+      if (newSlug === slugValue) continue;
 
       matchedCount++;
 
       console.log('\nEntry:', entry.sys.id);
-      console.log('Old slug:', oldSlug);
+      console.log('Old slug:', slugValue);
       console.log('New slug:', newSlug);
 
-      // Idempotency: if final new slug already exists, skip.
-      // This prevents duplicates if script is re-run.
-      const existingFinal = await findEntryBySlug(env, newSlug, searchLocale);
+      // Idempotency: if target slug already exists, skip creation.
+      const existingFinal = await findEntryBySlug(env, newSlug);
       if (existingFinal) {
-        console.log(`SKIP: final slug already exists (${newSlug}) -> entry ${existingFinal.sys.id}`);
+        console.log(`SKIP: target slug already exists (${newSlug}) -> entry ${existingFinal.sys.id}`);
+        skippedBecauseExists++;
         continue;
       }
 
-      // =========================
-      // STEP 1: CREATE COPY
-      // =========================
-      if (shouldRunCreate) {
-        const tempSlug = uniqueTempSlug(newSlug);
-        console.log('Temp slug:', tempSlug);
+      if (isDryRun) {
+        console.log('DRY_RUN: would create copy with new slug');
+        if (shouldPublishNew) console.log('DRY_RUN: would publish new entry');
+        if (shouldUnpublishOld) console.log('DRY_RUN: would unpublish old entry');
+        createdCount++;
+        continue;
+      }
 
-        if (isDryRun) {
-          console.log('DRY_RUN: would create copy entry with temp slug');
-          createdCopies.push({
-            oldEntryId: entry.sys.id,
-            oldSlug,
-            newSlug,
-            tempSlug,
-            newEntryId: 'DRY_RUN',
-            matchedLocale,
-          });
+      // Create the copy with the final slug immediately (no need for temp slug here).
+      const newFields = deepClone(entry.fields);
+      if (!newFields[SLUG_FIELD_ID]) newFields[SLUG_FIELD_ID] = {};
+      newFields[SLUG_FIELD_ID][LOCALE] = newSlug;
+
+      const created = await env.createEntry(CONTENT_TYPE_ID, { fields: newFields });
+      createdCount++;
+      console.log('CREATED:', created.sys.id);
+
+      if (shouldPublishNew) {
+        const published = await created.publish();
+        publishedCount++;
+        console.log('PUBLISHED:', published.sys.id);
+      }
+
+      if (shouldUnpublishOld) {
+        if (entry.sys.publishedVersion) {
+          await entry.unpublish();
+          unpublishedOldCount++;
+          console.log('UNPUBLISHED OLD:', entry.sys.id);
         } else {
-          const newFields = deepClone(entry.fields);
-
-          // Set temp slug only in the locale we're targeting (or all targetLocales if you want).
-          // Since slugs are not localized, setting on the matchedLocale (or searchLocale) is safest.
-          const slugLocaleToWrite = matchedLocale || searchLocale;
-
-          if (!newFields[SLUG_FIELD_ID]) newFields[SLUG_FIELD_ID] = {};
-          newFields[SLUG_FIELD_ID][slugLocaleToWrite] = tempSlug;
-
-          const created = await env.createEntry(CONTENT_TYPE_ID, { fields: newFields });
-
-          console.log('CREATED COPY:', created.sys.id);
-
-          createdCopies.push({
-            oldEntryId: entry.sys.id,
-            oldSlug,
-            newSlug,
-            tempSlug,
-            newEntryId: created.sys.id,
-            matchedLocale: slugLocaleToWrite,
-          });
+          console.log('OLD NOT PUBLISHED: skip unpublish');
         }
       }
     }
@@ -240,82 +188,13 @@ async function main() {
     if (skip >= entries.total) break;
   }
 
-  console.log('\nScan done.');
+  console.log('\nDone.');
   console.log('Examined:', examinedCount);
   console.log('Matched:', matchedCount);
-  console.log('Copies to process:', createdCopies.length);
-
-  // =========================
-  // STEP 2: UPDATE COPIES
-  // =========================
-  if (!shouldRunUpdate) {
-    console.log('\nUpdate step skipped (RUN_UPDATE=false).');
-    return;
-  }
-
-  if (!createdCopies.length) {
-    console.log('\nNo copies created/found to update.');
-    return;
-  }
-
-  let updatedCount = 0;
-  let publishedCount = 0;
-  let unpublishedOldCount = 0;
-
-  for (const item of createdCopies) {
-    const { oldEntryId, newEntryId, newSlug, tempSlug, matchedLocale } = item;
-
-    console.log('\nUpdating copy:', newEntryId);
-    console.log('Temp slug:', tempSlug);
-    console.log('Final slug:', newSlug);
-
-    if (isDryRun) {
-      console.log('DRY_RUN: would set final slug on the copied entry');
-      if (shouldPublish) console.log('DRY_RUN: would publish copied entry');
-      if (shouldUnpublishOld) console.log('DRY_RUN: would unpublish old entry');
-      updatedCount++;
-      continue;
-    }
-
-    // Fetch the newly created entry
-    const copiedEntry = await env.getEntry(newEntryId);
-
-    // Idempotency: if copied entry already has final slug, skip slug update
-    const currentSlug = copiedEntry.fields?.[SLUG_FIELD_ID]?.[matchedLocale];
-    if (currentSlug === newSlug) {
-      console.log('SKIP: copied entry already has final slug');
-    } else {
-      if (!copiedEntry.fields[SLUG_FIELD_ID]) copiedEntry.fields[SLUG_FIELD_ID] = {};
-      copiedEntry.fields[SLUG_FIELD_ID][matchedLocale] = newSlug;
-
-      const updated = await copiedEntry.update();
-      console.log('UPDATED COPY:', updated.sys.id);
-      updatedCount++;
-
-      if (shouldPublish) {
-        await updated.publish();
-        console.log('PUBLISHED COPY:', updated.sys.id);
-        publishedCount++;
-      }
-    }
-
-    // Optionally unpublish old entry
-    if (shouldUnpublishOld) {
-      const oldEntry = await env.getEntry(oldEntryId);
-      if (oldEntry.sys.publishedVersion) {
-        await oldEntry.unpublish();
-        console.log('UNPUBLISHED OLD:', oldEntry.sys.id);
-        unpublishedOldCount++;
-      } else {
-        console.log('OLD NOT PUBLISHED: skip unpublish');
-      }
-    }
-  }
-
-  console.log('\nDone.');
-  console.log('Copies updated:', updatedCount);
-  console.log('Copies published:', publishedCount);
+  console.log('Created:', isDryRun ? `${createdCount} (dry-run)` : createdCount);
+  console.log('Published:', publishedCount);
   console.log('Old entries unpublished:', unpublishedOldCount);
+  console.log('Skipped (target already exists):', skippedBecauseExists);
 }
 
 main().catch((e) => {
